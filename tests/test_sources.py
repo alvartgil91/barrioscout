@@ -29,6 +29,7 @@ from config.settings import (
     GOOGLE_PLACES_API_KEY,
     GOOGLE_PLACES_URL,
     INE_RENTA_URL,
+    INE_IPV_URL,
     OVERPASS_URL,
     OSM_POI_TAGS,
 )
@@ -58,47 +59,33 @@ def _fail(source: str, error: str) -> None:
 # ---------------------------------------------------------------------------
 
 def test_ministerio() -> None:
-    """Download the most recent transaction CSV and count rows for Granada/Madrid."""
-    source = "Ministerio de Transportes"
-    # The open-data index page listing quarterly files
-    INDEX_URL = (
-        "https://www.mitma.gob.es/informacion-para-el-ciudadano/"
-        "informacion-estadistica/vivienda-y-actuaciones-urbanas/"
-        "estadisticas-y-publicaciones/precio-de-la-vivienda/"
-        "estadistica-registral-inmobiliaria"
-    )
-    # Direct link to the most recent publicly available annual CSV
-    # (Estadística Registral Inmobiliaria — compraventas por municipio)
-    CSV_URL = (
-        "https://www.mitma.gob.es/recursos_mfom/paginabasica/recursos/"
-        "2023_estadistica_registral_anual_municipios.csv"
-    )
+    """Validate price data using INE IPV (Índice de Precios de Vivienda).
+
+    NOTE: Ministerio de Transportes municipal CSV files block programmatic access
+    via CloudFront WAF (HTTP 403). The INE IPV series (quarterly, by CCAA) is used
+    as the open alternative for price trend analysis. Municipal-level data from the
+    Ministerio can be downloaded manually from transportes.gob.es and placed in
+    data/raw/ for local processing.
+    """
+    source = "Precio vivienda — INE IPV (quarterly)"
     try:
         import io
         import pandas as pd
 
-        resp = requests.get(CSV_URL, timeout=30)
+        resp = requests.get(INE_IPV_URL, timeout=30)
         resp.raise_for_status()
-        df = pd.read_csv(io.BytesIO(resp.content), sep=";", encoding="latin-1", dtype=str)
+        df = pd.read_csv(
+            io.BytesIO(resp.content),
+            sep=";",
+            encoding="utf-8-sig",
+            dtype=str,
+        )
         df.columns = [c.strip().lower() for c in df.columns]
-
         total_rows = len(df)
-        # Try to filter by city — column name may vary; show total as fallback
         sample = f"Total rows: {total_rows:,} | Columns: {list(df.columns[:4])}"
         _ok(source, sample)
     except Exception as exc:
-        # Fallback: just confirm the server is reachable
-        try:
-            ping = requests.head(
-                "https://www.mitma.gob.es/", timeout=10
-            )
-            _fail(
-                source,
-                f"Server reachable (HTTP {ping.status_code}) but CSV fetch failed: {exc}\n"
-                f"         Tip: update CSV_URL in test_sources.py with current year.",
-            )
-        except Exception:
-            _fail(source, str(exc))
+        _fail(source, str(exc))
 
 
 # ---------------------------------------------------------------------------

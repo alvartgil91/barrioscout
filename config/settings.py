@@ -54,9 +54,15 @@ CATASTRO_INSPIRE_URL: str = (
     "https://ovc.catastro.meh.es/OVCServWeb/OVCWcfLibres/OVCFotoFachada.svc/rest"
 )
 
-# Ministerio de Transportes — estadísticas de precio de vivienda (open data)
+# INE — Índice de Precios de Vivienda (IPV), quarterly, by CCAA
+# NOTE: The Ministerio de Transportes (transportes.gob.es) publishes more granular
+# municipal-level data but blocks programmatic access via CloudFront WAF.
+# The INE IPV series is a reliable open alternative for price trend analysis.
+INE_IPV_URL: str = "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/25171.csv"
+
+# Ministerio de Transportes base URL (manual download only — WAF blocks scripts)
 MINISTERIO_BASE_URL: str = (
-    "https://www.mitma.gob.es/recursos_mfom/paginabasica/recursos/"
+    "https://www.transportes.gob.es/recursos_mfom/paginabasica/recursos/"
 )
 
 # INE — Renta neta media por persona (Atlas de distribución de renta)
