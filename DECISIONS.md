@@ -88,6 +88,23 @@ Este archivo sirve como documentación para el blog y referencia futura.
 - **Gap aceptable**: La renta municipal cambia lentamente; un gap de 2-3 años tiene impacto mínimo. Dashboard mostrará "Renta neta media (2023)".
 - **Mejora futura (Fase 3)**: Ajustar con variación IPV regional para obtener una estimación más reciente.
 
+### OSM POIs — cobertura y rate limits
+- **Query Overpass**: node+way+relation con amenity+shop keys. Transport incluye extras: railway=subway_entrance, railway=station, railway=tram_stop, public_transport=station.
+- **out center**: para obtener lat/lon de ways y relations (no tienen coordenadas top-level como los nodes).
+- **Dedup**: por osm_id — un POI mapeado como node y way solo cuenta una vez.
+- **Rate limits**: Madrid education (504) y shopping (429) fallaron en primera ejecución. Retry manual 2 min después funcionó. Sleep 2s entre requests insuficiente para bboxes grandes.
+- **Resultado**: Granada 714 POIs (200 edu + 321 health + 36 transport + 157 shopping). Madrid 7,346 POIs (2472 edu + 2717 health + 1014 transport + 1143 shopping). Total: 8,060 unique POIs.
+
+### Catastro — timeouts y cobertura parcial
+- **Granada**: 154 tiles, ~40 timeouts (60s cada uno), 12,180 buildings cargados. Cobertura ~80% estimada.
+- **Madrid**: 930 tiles, ejecución cancelada tras >1h. Pendiente ejecutar en background.
+- **Decisión**: Añadir retry logic con reintentos por tile fallido + flag --city para ejecutar una sola ciudad sin duplicar datos.
+
+### Carga raw layer — estado
+- BigQuery API habilitada, dataset barrioscout_raw creado.
+- INE Renta: 3,120 rows. INE IPV: 608 rows. Catastro: 12,180 (solo Granada). OSM POIs: 8,060. Total: ~24,000 rows.
+- La deduplicación definitiva se hará en barrioscout_clean (Fase 3).
+
 ---
 
 ## Fases planificadas

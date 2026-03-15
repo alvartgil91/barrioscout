@@ -17,6 +17,7 @@ XML structure (confirmed by probing):
 
 from __future__ import annotations
 
+import argparse
 import time
 from xml.etree import ElementTree as ET
 
@@ -66,14 +67,16 @@ def _generate_tiles(bbox_4326: tuple, tile_size_m: int = 900) -> list[tuple]:
     return tiles
 
 
-def _fetch_tile(bbox_25830: tuple) -> str:
-    """Fetch one WFS tile from the Catastro API.
+def _fetch_tile(bbox_25830: tuple, max_retries: int = 2, retry_wait: int = 5) -> str:
+    """Fetch one WFS tile from the Catastro API, with retry on failure.
 
     Args:
         bbox_25830: (xmin, ymin, xmax, ymax) in EPSG:25830.
+        max_retries: Maximum number of retry attempts after the first failure.
+        retry_wait: Seconds to wait between retries.
 
     Returns:
-        Raw XML string, or empty string on error / ExceptionReport.
+        Raw XML string, or empty string after all attempts fail / ExceptionReport.
     """
     xmin, ymin, xmax, ymax = bbox_25830
     params = {
@@ -83,16 +86,21 @@ def _fetch_tile(bbox_25830: tuple) -> str:
         "SRSName":   "EPSG::25830",
         "BBOX":      f"{xmin},{ymin},{xmax},{ymax}",
     }
-    try:
-        r = requests.get(_WFS_URL, params=params, timeout=60)
-        r.raise_for_status()
-        if "ExceptionReport" in r.text:
-            print(f"  WARNING: ExceptionReport for tile {xmin:.0f},{ymin:.0f}")
-            return ""
-        return r.text
-    except Exception as exc:
-        print(f"  WARNING: tile {xmin:.0f},{ymin:.0f} failed — {exc}")
-        return ""
+    for attempt in range(1 + max_retries):
+        try:
+            r = requests.get(_WFS_URL, params=params, timeout=60)
+            r.raise_for_status()
+            if "ExceptionReport" in r.text:
+                print(f"  WARNING: ExceptionReport for tile {xmin:.0f},{ymin:.0f}")
+                return ""
+            return r.text
+        except Exception as exc:
+            if attempt < max_retries:
+                print(f"  WARNING: tile {xmin:.0f},{ymin:.0f} failed (attempt {attempt + 1}) — {exc}. Retrying in {retry_wait}s...")
+                time.sleep(retry_wait)
+            else:
+                print(f"  WARNING: tile {xmin:.0f},{ymin:.0f} failed after {attempt + 1} attempts — {exc}")
+    return ""
 
 
 def extract(city_key: str = "granada") -> list[str]:
@@ -107,12 +115,16 @@ def extract(city_key: str = "granada") -> list[str]:
     bbox = CITIES[city_key]["bbox"]  # (south, west, north, east) EPSG:4326
     tiles = _generate_tiles(bbox)
     xml_list: list[str] = []
+    failed = 0
     for i, tile in enumerate(tiles, 1):
         xml = _fetch_tile(tile)
+        if not xml:
+            failed += 1
         count = xml.count("<bu-ext2d:Building ") if xml else 0
         print(f"  Tile {i}/{len(tiles)}: {count} buildings")
         xml_list.append(xml)
         time.sleep(1)
+    print(f"  Tiles: {len(tiles)} total, {failed} failed, {len(tiles) - failed} succeeded")
     return xml_list
 
 
@@ -211,7 +223,18 @@ def load(df: pd.DataFrame) -> int:
 
 
 def main() -> None:
-    for city_key in CITIES:
+    parser = argparse.ArgumentParser(description="Catastro INSPIRE buildings pipeline")
+    parser.add_argument(
+        "--city",
+        choices=list(CITIES.keys()),
+        default=None,
+        help="City to process (default: all cities)",
+    )
+    args = parser.parse_args()
+
+    city_keys = [args.city] if args.city else list(CITIES.keys())
+
+    for city_key in city_keys:
         print(f"\n=== Catastro pipeline — {city_key} ===")
         xml_list = extract(city_key)
         df = transform(xml_list)
