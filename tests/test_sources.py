@@ -28,7 +28,8 @@ from config.settings import (
     CITIES,
     GOOGLE_PLACES_API_KEY,
     GOOGLE_PLACES_URL,
-    INE_RENTA_URL,
+    INE_RENTA_BASE_URL,
+    INE_RENTA_TABLE_IDS,
     INE_IPV_URL,
     OVERPASS_URL,
     OSM_POI_TAGS,
@@ -122,28 +123,18 @@ def test_catastro() -> None:
 # ---------------------------------------------------------------------------
 
 def test_osm() -> None:
-    """Query hospitals within the Granada bounding box."""
+    """Fetch health POIs in Granada using the osm_pois pipeline."""
     source = "OpenStreetMap — Overpass API"
-    granada = CITIES["granada"]
-    south, west, north, east = granada["bbox"]
-    bbox_str = f"{south},{west},{north},{east}"
+    from src.ingestion.osm_pois import build_overpass_query, extract
 
-    query = (
-        f'[out:json][timeout:25];\n'
-        f'(\n'
-        f'  node["amenity"="hospital"]({bbox_str});\n'
-        f'  way["amenity"="hospital"]({bbox_str});\n'
-        f');\n'
-        f'out body;'
-    )
+    granada = CITIES["granada"]
+    bbox = granada["bbox"]
     try:
-        resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=60)
-        resp.raise_for_status()
-        data = resp.json()
-        elements = data.get("elements", [])
+        raw = extract(bbox, "health")
+        elements = raw.get("elements", [])
         count = len(elements)
         first_name = elements[0].get("tags", {}).get("name", "unnamed") if elements else "—"
-        _ok(source, f"Hospitals in Granada: {count} | First: '{first_name}'")
+        _ok(source, f"Health POIs in Granada: {count} | First: '{first_name}'")
     except Exception as exc:
         _fail(source, str(exc))
 
@@ -187,28 +178,27 @@ def test_google_places() -> None:
 # ---------------------------------------------------------------------------
 
 def test_ine() -> None:
-    """Download the INE median income CSV and validate it has rows."""
+    """Download the INE median income CSV for Granada and validate it has rows."""
     source = "INE — Renta neta media por persona"
     try:
         import io
         import pandas as pd
 
-        resp = requests.get(INE_RENTA_URL, timeout=60)
+        table_id = INE_RENTA_TABLE_IDS["granada"]
+        url = INE_RENTA_BASE_URL.format(table_id=table_id)
+        resp = requests.get(url, timeout=60)
         resp.raise_for_status()
 
         df = pd.read_csv(
             io.BytesIO(resp.content),
-            sep="\t",
+            sep=";",
             encoding="utf-8-sig",
-            thousands=".",
-            decimal=",",
             dtype=str,
             nrows=5,
         )
         rows_hint = f"First 5 rows loaded | Columns: {list(df.columns[:4])}"
         _ok(source, rows_hint)
     except Exception as exc:
-        # Try HEAD to confirm server is up
         try:
             ping = requests.head("https://www.ine.es/", timeout=10)
             _fail(
