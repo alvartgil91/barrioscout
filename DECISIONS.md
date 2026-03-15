@@ -71,6 +71,13 @@ Este archivo sirve como documentación para el blog y referencia futura.
 - **IDs correctos**: Granada (prov 18) = 31025, Madrid (prov 28) = 31097.
 - **Pipeline**: `extract()` descarga y concatena ambas tablas en cada ejecución.
 
+### Catastro INSPIRE WFS (Buildings)
+- **Endpoint**: `wfsBU.aspx` (buildings). El código anterior usaba `wfsCP.aspx` (parcelas) — corregido.
+- **Límite API**: El límite real es ~1km² (la documentación indica 4km² pero está desactualizada; probado: 1000m OK, 1100m falla). Solución: tiling con pyproj (EPSG:4326→25830). Tile size 900m (~0.81km²). Sleep 1s entre requests por cortesía.
+- **Datos extraídos**: ref catastral, año construcción, uso actual, centroide WGS84 (derivado del midpoint del bbox EPSG:25830).
+- **Namespaces reales**: `bu-ext2d`/`bu-core2d` en `inspire.jrc.ec.europa.eu/schemas` (no `inspire.ec.europa.eu`).
+- **Encoding respuesta**: ISO-8859-1.
+
 ### INE IPV — cobertura y granularidad
 - **Datos**: Trimestrales por CCAA (tabla 25171). No existe granularidad municipal.
 - **Filtrado**: Andalucía (proxy Granada) y Comunidad de Madrid. Indicador: General (excluye nueva/segunda mano).

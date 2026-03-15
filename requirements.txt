@@ -2,6 +2,7 @@ requests
 beautifulsoup4
 lxml
 pandas
+pyproj
 google-cloud-bigquery
 streamlit
 python-dotenv
