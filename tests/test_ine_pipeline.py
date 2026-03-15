@@ -52,13 +52,13 @@ def test_ine_pipeline() -> None:
 
     # Structural assertions (data-source agnostic)
     assert not clean.empty, "transform() returned empty DataFrame"
-    expected_cols = {"municipio_codigo", "municipio_nombre", "año", "renta_neta_media", "city"}
+    expected_cols = {"municipality_code", "municipality_name", "year", "net_avg_income", "city"}
     assert expected_cols.issubset(set(clean.columns)), (
         f"Missing columns: {expected_cols - set(clean.columns)}"
     )
-    assert clean["renta_neta_media"].notna().all(), "Null values found in renta_neta_media"
-    assert clean["municipio_codigo"].str.match(r"^\d{5}$").all(), "Unexpected municipio_codigo format"
-    assert clean["año"].notna().all(), "Null values found in año"
+    assert clean["net_avg_income"].notna().all(), "Null values found in net_avg_income"
+    assert clean["municipality_code"].str.match(r"^\d{5}$").all(), "Unexpected municipality_code format"
+    assert clean["year"].notna().all(), "Null values found in year"
 
     # City column must only contain expected labels or None
     valid_cities = {"Granada", "Madrid", None}
