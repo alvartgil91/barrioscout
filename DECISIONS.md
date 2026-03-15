@@ -1,0 +1,73 @@
+# BarrioScout — Decision Log
+
+Registro de decisiones técnicas y de producto tomadas durante el desarrollo.
+Este archivo sirve como documentación para el blog y referencia futura.
+
+---
+
+## Fase 0 — Diseño y planificación
+
+### Nombre del proyecto
+- **Decisión**: BarrioScout ("barrio" local español + "scout" explorar oportunidades)
+- **Alternativas descartadas**: SpainRE Intelligence, HabiScore, CasaData, InmoScope, UrbanRadar, CasaLens, PropScore, NestMetrics, BarrioLens
+
+### Stack tecnológico
+- **Dashboard**: Streamlit (Python puro, 0€, rápido de construir)
+- **Descartados**: Evidence.dev (curva nueva innecesaria), Next.js (demasiado trabajo frontend para un proyecto de datos)
+- **AI**: Precalculado con Claude API, batch mensual guardado en BQ. 0€ por visita.
+- **Descartado**: AI en tiempo real (coste por visita incontrolable en app pública)
+
+### Ingesta de datos
+- **Decisión**: Python puro (requests + pandas + google-cloud-bigquery)
+- **Descartados**: dlt (sobreingeniería para 5 fuentes), Mage/Airflow/Prefect (necesitan servidor 24/7, overkill para actualización trimestral)
+- **Razón**: Para portfolio, Python puro demuestra que sabes construir pipelines desde cero
+
+### Patrón de datos
+- **Decisión**: Medallion (raw → clean → analytics) en BigQuery
+- **raw**: dato tal cual llega, append-only
+- **clean**: tipado, deduplicado, normalizado (SQL views en BQ)
+- **analytics**: agregaciones que consume Streamlit (SQL views en BQ)
+
+### Datos de portales inmobiliarios
+- **Idealista API**: solicitada hace ~10 años, credenciales perdidas, límites muy cortos
+- **Scraping continuo**: descartado (anti-bot, ToS, mala imagen en portfolio)
+- **Decisión**: Carga inicial scrapeando una vez + alertas email de Idealista/Fotocasa para nuevos pisos
+- **Flujo**: Emails → parseo con Python/n8n → BigQuery
+- **MCP scrapers (Bright Data, Apify)**: descartados por coste mensual, objetivo es 0€
+
+### Infraestructura
+- **MacBook 2013 como servidor**: descartado (30-60W = 15-25€/mes electricidad > VPS Hetzner 5€/mes)
+- **VPS**: pendiente, no necesario hasta tener pipelines automatizados
+- **Coste objetivo**: 0€/mes durante desarrollo, máximo 5€/mes en producción
+
+### Alcance geográfico
+- **Decisión**: Granada + Madrid (dos mercados diferentes: pequeño/turístico vs grande/competitivo)
+- **Razón**: Demuestra que el sistema escala. "¿Y Barcelona?" → "Solo hay que añadir la ciudad al config"
+
+---
+
+## Fase 1 — Setup + validación de fuentes
+
+- **Fecha**: marzo 2025
+- **Resultado**: COMPLETADA ✅
+- **Archivos creados**: 21
+- **Tests de validación**:
+  - INE IPV (precio vivienda): OK — 18.240 rows
+  - Catastro INSPIRE WFS: OK — XML válido
+  - OpenStreetMap Overpass: OK — 12 hospitales en Granada
+  - Google Places: SKIP — sin API key configurada
+  - INE Renta media: OK — datos cargados
+- **Fix detectado**: INE usa separador ";" no "\t" — a corregir en Fase 2
+- **Commits**: 2 (estructura inicial + fix source precio vivienda)
+
+---
+
+## Fases planificadas
+
+| Fase | Descripción | Sesiones estimadas |
+|------|-------------|-------------------|
+| F1 | Setup + validación fuentes | COMPLETADA |
+| F2 | Pipelines de ingesta | 3-4 sesiones |
+| F3 | Scoring engine (ubicación + precio) | 2-3 sesiones |
+| F4 | Streamlit dashboard + recomendador | 3-4 sesiones |
+| F5 | AI insights precalculados (Claude API) | 1-2 sesiones |
