@@ -62,6 +62,17 @@ Este archivo sirve como documentación para el blog y referencia futura.
 
 ---
 
+## Fase 2 — Pipelines de ingesta (en curso)
+
+### INE Atlas de Distribución de Renta — descubrimiento de tablas por provincia
+- **Problema**: La tabla 30896 configurada en Fase 1 solo cubría Cataluña (provincia 08), no España completa.
+- **Investigación**: El INE publica una tabla por provincia dentro de la operación 353 (Atlas ADRH). No existe una tabla nacional única. Los IDs no siguen un offset fijo — se descubrieron probando la API `servicios.ine.es/wstempus/js/ES/TABLAS_OPERACION/353` y descargando muestras.
+- **Decisión**: Configurar `INE_RENTA_TABLE_IDS: dict[str, int]` por ciudad objetivo en `config/settings.py`. Añadir una ciudad nueva = añadir una entrada al dict.
+- **IDs correctos**: Granada (prov 18) = 31025, Madrid (prov 28) = 31097.
+- **Pipeline**: `extract()` descarga y concatena ambas tablas en cada ejecución.
+
+---
+
 ## Fases planificadas
 
 | Fase | Descripción | Sesiones estimadas |

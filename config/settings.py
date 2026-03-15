@@ -66,9 +66,13 @@ MINISTERIO_BASE_URL: str = (
 )
 
 # INE — Renta neta media por persona (Atlas de distribución de renta)
-INE_RENTA_URL: str = (
-    "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/30896.csv"
-)
+# NOTE: INE publishes one table per province (operación 353). No single national table exists.
+# IDs discovered by probing: add new cities here to extend coverage.
+INE_RENTA_TABLE_IDS: dict[str, int] = {
+    "granada": 31025,
+    "madrid":  31097,
+}
+INE_RENTA_BASE_URL: str = "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/{table_id}.csv"
 
 # Google Places
 GOOGLE_PLACES_API_KEY: str = os.getenv("GOOGLE_PLACES_API_KEY", "")

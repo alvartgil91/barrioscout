@@ -1,14 +1,12 @@
 """
 Ingestion module for INE (Instituto Nacional de Estadística) data.
 
-Source: Atlas de distribución de renta de los hogares
-URL: https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/30896.csv
+Source: Atlas de distribución de renta de los hogares (operación 353)
 Schema target: barrioscout_raw.ine_renta
 
-# TODO: INE_RENTA_URL currently covers only Catalonia (province 08). Find a
-# national-coverage table for Granada (18) and Madrid (28) and update
-# INE_RENTA_URL in config/settings.py. The city column will be None for all
-# municipalities outside those provinces — city filtering happens in clean layer.
+INE publishes one table per province. Tables for target cities:
+  Granada (province 18) → table 31025
+  Madrid  (province 28) → table 31097
 """
 
 from __future__ import annotations
@@ -18,30 +16,39 @@ import io
 import pandas as pd
 import requests
 
-from config.settings import INE_RENTA_URL
+from config.settings import INE_RENTA_BASE_URL, INE_RENTA_TABLE_IDS
 
 # Only keep this income indicator from the multiple available
 _INDICATOR = "Renta neta media por persona"
 
 
-def extract(url: str = INE_RENTA_URL) -> pd.DataFrame:
-    """Download the INE renta CSV and return it as a raw DataFrame.
+def extract(
+    table_ids: dict[str, int] = INE_RENTA_TABLE_IDS,
+    base_url: str = INE_RENTA_BASE_URL,
+) -> pd.DataFrame:
+    """Download INE renta CSVs for all configured provinces and concatenate.
 
     Args:
-        url: URL to the INE CSV file (defaults to renta neta media por persona).
+        table_ids: Mapping of city name → INE table ID.
+        base_url: URL template with {table_id} placeholder.
 
     Returns:
-        Raw DataFrame with original column names and string dtypes.
+        Concatenated raw DataFrame with original column names and string dtypes.
     """
-    response = requests.get(url, timeout=60)
-    response.raise_for_status()
-    df = pd.read_csv(
-        io.BytesIO(response.content),
-        sep=";",
-        encoding="utf-8-sig",
-        dtype=str,
-    )
-    return df
+    frames = []
+    for city, table_id in table_ids.items():
+        url = base_url.format(table_id=table_id)
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        df = pd.read_csv(
+            io.BytesIO(response.content),
+            sep=";",
+            encoding="utf-8-sig",
+            dtype=str,
+        )
+        print(f"  Downloading {city} (table {table_id})... {len(df):,} rows")
+        frames.append(df)
+    return pd.concat(frames, ignore_index=True)
 
 
 def transform(df: pd.DataFrame) -> pd.DataFrame:
@@ -135,7 +142,7 @@ def main() -> None:
 
     clean = transform(raw)
     cities = clean["city"].dropna().unique().tolist()
-    print(f"Transformed: {len(clean):,} rows | cities in data: {sorted(cities) or 'none (check INE_RENTA_URL)'}")
+    print(f"Transformed: {len(clean):,} rows | cities: {sorted(cities)}")
 
     loaded = load(clean)
     print(f"Loaded     : {loaded:,} rows → barrioscout_raw.ine_renta")

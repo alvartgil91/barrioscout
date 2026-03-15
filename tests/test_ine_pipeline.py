@@ -4,10 +4,6 @@ Validation test for the INE Renta ingestion pipeline.
 Tests extract() and transform() without requiring BigQuery credentials.
 Prints shape, columns, and 3 sample rows for visual inspection.
 
-NOTE: INE table 30896 covers Catalonia municipalities. The 'city' column will
-be None for all rows in this dataset (Granada/Madrid data requires a national
-table). Update INE_RENTA_URL in config/settings.py for national coverage.
-
 Usage:
     python tests/test_ine_pipeline.py
 """
@@ -44,13 +40,13 @@ def test_ine_pipeline() -> None:
     print(f"  Shape   : {clean.shape}")
     print(f"  Columns : {list(clean.columns)}")
     cities = clean["city"].dropna().unique().tolist()
-    print(f"  Cities  : {sorted(cities) if cities else 'none in this dataset (see note above)'}\n")
+    print(f"  Cities  : {sorted(cities)}\n")
 
     print(f"{BOLD}Sample (3 rows):{RESET}")
     print(clean.head(3).to_string(index=False))
     print()
 
-    # Structural assertions (data-source agnostic)
+    # Structural assertions
     assert not clean.empty, "transform() returned empty DataFrame"
     expected_cols = {"municipality_code", "municipality_name", "year", "net_avg_income", "city"}
     assert expected_cols.issubset(set(clean.columns)), (
@@ -60,12 +56,9 @@ def test_ine_pipeline() -> None:
     assert clean["municipality_code"].str.match(r"^\d{5}$").all(), "Unexpected municipality_code format"
     assert clean["year"].notna().all(), "Null values found in year"
 
-    # City column must only contain expected labels or None
-    valid_cities = {"Granada", "Madrid", None}
-    actual_cities = set(clean["city"].unique())
-    assert actual_cities.issubset(valid_cities | {float("nan")}), (
-        f"Unexpected city values: {actual_cities - valid_cities}"
-    )
+    # Both target cities must be present
+    assert "Granada" in cities, "No Granada municipalities found"
+    assert "Madrid" in cities, "No Madrid municipalities found"
 
     print(f"{GREEN}OK — all assertions passed{RESET}\n")
 
