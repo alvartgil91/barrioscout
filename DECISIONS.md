@@ -71,6 +71,11 @@ Este archivo sirve como documentación para el blog y referencia futura.
 - **IDs correctos**: Granada (prov 18) = 31025, Madrid (prov 28) = 31097.
 - **Pipeline**: `extract()` descarga y concatena ambas tablas en cada ejecución.
 
+### INE Renta — cobertura temporal y gap 2024-2026
+- **Datos disponibles**: 2015-2023 (publicación anual en octubre).
+- **Gap aceptable**: La renta municipal cambia lentamente; un gap de 2-3 años tiene impacto mínimo. Dashboard mostrará "Renta neta media (2023)".
+- **Mejora futura (Fase 3)**: Ajustar con variación IPV regional para obtener una estimación más reciente.
+
 ---
 
 ## Fases planificadas
