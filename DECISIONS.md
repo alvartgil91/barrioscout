@@ -71,6 +71,11 @@ Este archivo sirve como documentación para el blog y referencia futura.
 - **IDs correctos**: Granada (prov 18) = 31025, Madrid (prov 28) = 31097.
 - **Pipeline**: `extract()` descarga y concatena ambas tablas en cada ejecución.
 
+### INE IPV — cobertura y granularidad
+- **Datos**: Trimestrales por CCAA (tabla 25171). No existe granularidad municipal.
+- **Filtrado**: Andalucía (proxy Granada) y Comunidad de Madrid. Indicador: General (excluye nueva/segunda mano).
+- **Uso**: Tendencia de precios a nivel regional; en Fase 3 se usará para ajustar estimaciones de renta reciente.
+
 ### INE Renta — cobertura temporal y gap 2024-2026
 - **Datos disponibles**: 2015-2023 (publicación anual en octubre).
 - **Gap aceptable**: La renta municipal cambia lentamente; un gap de 2-3 años tiene impacto mínimo. Dashboard mostrará "Renta neta media (2023)".
