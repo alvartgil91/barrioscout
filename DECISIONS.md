@@ -105,6 +105,15 @@ Este archivo sirve como documentación para el blog y referencia futura.
 - INE Renta: 3,120 rows. INE IPV: 608 rows. Catastro: 12,180 (solo Granada). OSM POIs: 8,060. Total: ~24,000 rows.
 - La deduplicación definitiva se hará en barrioscout_clean (Fase 3).
 
+### Ministerio de Transportes — datos notariales y valor tasado (Fase 2.5)
+- **Fuente**: Boletín estadístico online del Ministerio (apps.fomento.gob.es/BoletinOnline2/)
+- **WAF**: El dominio principal transportes.gob.es bloquea scripts, pero apps.fomento.gob.es permite descarga directa de XLS.
+- **Decisión**: Descarga manual de dos XLS a data/raw/, pipeline lee desde disco local (no HTTP).
+- **Transacciones por municipio**: 1 sheet wide, 88 trimestres (2004-Q1 → 2025-Q4), ~8,171 municipios de toda España. Se filtran solo Granada y Madrid. Unpivot a formato long.
+- **Valor tasado €/m²**: 84 sheets (1 por trimestre), solo municipios >25K hab. "n.r" = no reportado → NaN. Forward-fill en provincia (celdas mergeadas).
+- **Cobertura**: Datos trimestrales 2004-2025 (transacciones), 2005-2025 (valor tasado). Ambos incluyen Granada y Madrid.
+- **Valor para el proyecto**: Precio oficial de referencia por municipio + volumen de mercado. Complementa INE IPV (que es por CCAA) con granularidad municipal.
+
 ---
 
 ## Fases planificadas

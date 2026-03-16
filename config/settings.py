@@ -88,3 +88,9 @@ OSM_POI_TAGS: dict[str, list[str]] = {
     "transport": ["subway_entrance", "bus_station", "train_station"],
     "shopping": ["supermarket", "marketplace"],
 }
+
+# ---------------------------------------------------------------------------
+# Ministerio de Transportes — local XLS files (WAF blocks programmatic download)
+# ---------------------------------------------------------------------------
+MINISTERIO_TRANSACCIONES_XLS: str = "data/raw/ministerio_transacciones_municipio.xls"
+MINISTERIO_VALOR_TASADO_XLS: str = "data/raw/ministerio_valor_tasado_municipio.xls"
