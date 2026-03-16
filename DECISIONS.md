@@ -62,7 +62,7 @@ Este archivo sirve como documentación para el blog y referencia futura.
 
 ---
 
-## Fase 2 — Pipelines de ingesta (en curso)
+## Fase 2 — Pipelines de ingesta (completada)
 
 ### INE Atlas de Distribución de Renta — descubrimiento de tablas por provincia
 - **Problema**: La tabla 30896 configurada en Fase 1 solo cubría Cataluña (provincia 08), no España completa.
@@ -114,6 +114,25 @@ Este archivo sirve como documentación para el blog y referencia futura.
 - **Cobertura**: Datos trimestrales 2004-2025 (transacciones), 2005-2025 (valor tasado). Ambos incluyen Granada y Madrid.
 - **Valor para el proyecto**: Precio oficial de referencia por municipio + volumen de mercado. Complementa INE IPV (que es por CCAA) con granularidad municipal.
 
+### Fase 2 — Resumen final
+- **Estado**: COMPLETADA ✅
+- **Raw layer en BigQuery** (dataset: barrioscout_raw, proyecto: portfolio-alvartgil91):
+  - ine_renta: 3,120 rows — renta media por municipio (2015-2023, Granada+Madrid)
+  - ine_ipv: 608 rows — índice precios vivienda trimestral por CCAA (2007-2025)
+  - catastro_buildings: 72,684 rows — edificios (12,180 Granada + 60,504 Madrid)
+  - osm_pois: 8,060 rows — POIs de 4 categorías (education, health, transport, shopping)
+  - ministerio_transacciones: 176 rows — compraventas trimestrales por municipio (2004-2025)
+  - ministerio_valor_tasado: 168 rows — valor tasado €/m² trimestral por municipio (2005-2025)
+  - Total: ~84,816 rows
+- **Hallazgos técnicos clave**:
+  - INE publica una tabla de renta por provincia, no nacional. IDs descubiertos probando la API.
+  - Catastro INSPIRE tiene límite real de ~1km² (no 4km² como dice la doc). Tiles de 900m. Retry logic necesaria (timeouts frecuentes).
+  - Overpass rate limits para bboxes grandes (Madrid). Sleep 2s insuficiente; retry manual necesario.
+  - Ministerio WAF bloquea descargas con scripts; XLS descargados manualmente. Formato complejo con merged cells.
+  - Python buffering: necesario -u flag para logs en background (nohup).
+- **Archivos de ingesta**: ine.py, ine_ipv.py, catastro.py, osm_pois.py, ministerio_transacciones.py, ministerio_valor_tasado.py
+- **Nota**: ministerio.py (Fase 1) queda como legacy; los nuevos pipelines lo reemplazan.
+
 ---
 
 ## Fases planificadas
@@ -121,7 +140,7 @@ Este archivo sirve como documentación para el blog y referencia futura.
 | Fase | Descripción | Sesiones estimadas |
 |------|-------------|-------------------|
 | F1 | Setup + validación fuentes | COMPLETADA |
-| F2 | Pipelines de ingesta | 3-4 sesiones |
+| F2 | Pipelines de ingesta | COMPLETADA (5 sesiones) |
 | F3 | Scoring engine (ubicación + precio) | 2-3 sesiones |
 | F4 | Streamlit dashboard + recomendador | 3-4 sesiones |
 | F5 | AI insights precalculados (Claude API) | 1-2 sesiones |
