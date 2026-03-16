@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS `portfolio-alvartgil91.barrioscout_raw.idealista_listings` (
+  property_id STRING NOT NULL,
+  operation_type STRING NOT NULL,
+  property_type STRING,
+  address STRING,
+  city STRING,
+  price FLOAT64,
+  area_m2 FLOAT64,
+  bedrooms INT64,
+  floor INT64,
+  is_exterior BOOL,
+  description STRING,
+  image_url STRING,
+  lat FLOAT64,
+  lon FLOAT64,
+  email_date TIMESTAMP,
+  campaign_type STRING,
+  email_id STRING NOT NULL,
+  _loaded_at TIMESTAMP NOT NULL
+);

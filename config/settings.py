@@ -94,3 +94,13 @@ OSM_POI_TAGS: dict[str, list[str]] = {
 # ---------------------------------------------------------------------------
 MINISTERIO_TRANSACCIONES_XLS: str = "data/raw/ministerio_transacciones_municipio.xls"
 MINISTERIO_VALOR_TASADO_XLS: str = "data/raw/ministerio_valor_tasado_municipio.xls"
+
+# ---------------------------------------------------------------------------
+# Gmail API (Idealista email alerts)
+# ---------------------------------------------------------------------------
+GMAIL_CREDENTIALS_PATH: str = "credentials/gmail_oauth.json"
+GMAIL_TOKEN_PATH: str = "credentials/gmail_token.json"
+GMAIL_SCOPES: list[str] = ["https://www.googleapis.com/auth/gmail.modify"]
+IDEALISTA_EMAIL_SENDERS: list[str] = ["alertas@idealista.com", "no-reply@idealista.com", "noresponder@idealista.com"]
+NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
+NOMINATIM_USER_AGENT: str = "BarrioScout/1.0 (alvartgil91.io@gmail.com)"

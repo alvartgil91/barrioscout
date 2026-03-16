@@ -37,6 +37,9 @@ data/processed/
 service_account*.json
 gcp_credentials*.json
 
+# OAuth credentials and tokens
+credentials/
+
 # IDE
 .vscode/
 .idea/
