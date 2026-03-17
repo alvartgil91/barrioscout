@@ -8,3 +8,4 @@ lxml
 requests
 pandas
 python-dotenv
+pyarrow
