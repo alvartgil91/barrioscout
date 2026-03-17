@@ -135,7 +135,7 @@ Este archivo sirve como documentación para el blog y referencia futura.
 
 ---
 
-## Fase 2.7 — Automatización: Cloud Function para Idealista emails
+## Fase 2.6b — Automatización: Cloud Function para Idealista emails
 
 ### Decisión: Cloud Function 2nd gen + Cloud Scheduler (cada 6h)
 - **Motivación**: El pipeline de Idealista emails (`idealista_emails.py`) funcionaba solo con ejecución manual local. Con ~50 emails/día, necesita automatización para no perder datos.
@@ -166,6 +166,33 @@ Este archivo sirve como documentación para el blog y referencia futura.
 - **`get_gmail_service(creds=None)`**: Si no se pasan credenciales, funciona igual que antes (archivos locales + browser flow).
 - **`extract(max_emails=200)`**: El default de 200 mantiene el comportamiento original para ejecución local.
 - **`config/settings.py`**: `GMAIL_TOKEN_PATH` y `GMAIL_CREDENTIALS_PATH` leen de env vars con fallback al valor original.
+
+---
+
+## Fase 2.7 — Polígonos de barrios y distritos
+
+### Fuentes elegidas
+- **Madrid**: TopoJSON oficial del Ayuntamiento (geoportal.madrid.es). Barrios (131 polígonos) y Distritos (21 polígonos) como archivos separados. Coordenadas cuantizadas en WGS84. Decodificación manual sin dependencia `topojson` — solo delta-decode + dequantize (~30 líneas).
+- **Granada**: IDE Andalucía WFS DEA100, capa `dea100:da04_barrio`. GeoJSON directo (`OUTPUTFORMAT=application/json`). CRS nativo EPSG:23030 (ED50 / UTM 30N) — reproyección a WGS84 con pyproj.
+
+### Decisión: distritos Granada por dissolve
+- **Problema**: No existe capa de distritos como polígonos separados en el WFS. La capa `da06` es secciones censales, no distritos. El campo `distrito` existe como texto en cada barrio.
+- **Solución**: `shapely.ops.unary_union` de barrios agrupados por campo `distrito` → genera 8 polígonos de distrito.
+- **Alternativa descartada**: Overpass API (`admin_level=9`) — datos OSM menos oficiales y cobertura incierta para Granada.
+
+### Decisión: WKT en raw, GEOGRAPHY en clean
+- **Motivación**: BigQuery GEOGRAPHY no permite `autodetect=True` en load jobs. Almacenar como STRING (WKT) en raw, convertir con `ST_GEOGFROMTEXT(geometry_wkt)` en vistas clean/analytics.
+- **Ventaja**: Consistente con el patrón raw = dato tal cual llega, minimal transformation.
+
+### Hallazgos del probing
+- **Madrid TopoJSON**: Coordenadas ya en WGS84 (lon/lat), no necesita reproyección. 131 barrios todos Polygon (ningún MultiPolygon). Properties útiles: NOMBRE, NOMDIS (distrito padre), COD_BAR.
+- **Granada WFS**: 37 barrios en 8 distritos. 2 nombres duplicados entre distritos distintos ("Joaquina Eguaras" en Beiro y Norte, "San Matías-Realejo" 2× en Centro). Se resuelve usando distrito+barrio como identificador.
+- **CRS Granada**: EPSG:23030 (metros), magnitud x~449000 y~4112000. Reproyección obligatoria.
+
+### Datos cargados
+- Madrid: 131 barrios + 21 distritos = 152 rows
+- Granada: 37 barrios + 8 distritos (dissolved) = 45 rows
+- Total: ~197 rows → barrioscout_raw.neighborhoods
 
 ---
 

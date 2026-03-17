@@ -8,4 +8,5 @@ lxml
 requests
 pandas
 python-dotenv
+shapely
 pyarrow
