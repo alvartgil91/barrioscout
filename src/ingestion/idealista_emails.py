@@ -42,31 +42,38 @@ from config.settings import (
 # ---------------------------------------------------------------------------
 
 
-def get_gmail_service() -> Resource:
+def get_gmail_service(creds: Credentials | None = None) -> Resource:
     """Authenticate with Gmail API and return a service resource.
 
-    Uses cached token if available (auto-refreshes on expiry).
-    Triggers browser-based OAuth2 flow on first run.
+    If *creds* is provided (e.g. from Secret Manager in Cloud Functions),
+    they are used directly — no local files or browser flow involved.
+
+    Otherwise, falls back to the local token file + browser OAuth2 flow
+    (original behaviour for local development).
+
+    Args:
+        creds: Pre-built OAuth2 credentials. When ``None``, credentials
+               are loaded from local files.
 
     Returns:
         Authenticated Gmail API service resource.
     """
-    creds: Credentials | None = None
-    token_path = Path(GMAIL_TOKEN_PATH)
-    credentials_path = Path(GMAIL_CREDENTIALS_PATH)
+    if creds is None:
+        token_path = Path(GMAIL_TOKEN_PATH)
+        credentials_path = Path(GMAIL_CREDENTIALS_PATH)
 
-    if token_path.exists():
-        creds = Credentials.from_authorized_user_file(str(token_path), GMAIL_SCOPES)
+        if token_path.exists():
+            creds = Credentials.from_authorized_user_file(str(token_path), GMAIL_SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                str(credentials_path), GMAIL_SCOPES
-            )
-            creds = flow.run_local_server(port=0)
-        token_path.write_text(creds.to_json())
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(
+                    str(credentials_path), GMAIL_SCOPES
+                )
+                creds = flow.run_local_server(port=0)
+            token_path.write_text(creds.to_json())
 
     return build("gmail", "v1", credentials=creds)
 
@@ -342,16 +349,25 @@ def _extract_campaign_type(soup: BeautifulSoup) -> str | None:
     return None
 
 
-def extract() -> list[dict]:
+def extract(
+    max_emails: int = 200,
+    creds: Credentials | None = None,
+) -> list[dict]:
     """Fetch Idealista alert emails from Gmail and parse property listings.
 
     Searches for unprocessed emails from Idealista senders (those without the
     'BarrioScout/Procesado' label). Parses all property cards from HTML bodies.
 
+    Args:
+        max_emails: Maximum number of emails to process per run. Keeps execution
+                    time bounded (especially for geocoding). Remaining emails
+                    will be picked up in the next run.
+        creds: Pre-built OAuth2 credentials forwarded to ``get_gmail_service``.
+
     Returns:
         List of dicts, one per property listing found across all emails.
     """
-    service = get_gmail_service()
+    service = get_gmail_service(creds=creds)
 
     # Build search query: emails from Idealista senders, not yet processed
     # in:anywhere includes spam/trash/archive in addition to inbox
@@ -362,6 +378,11 @@ def extract() -> list[dict]:
     response = service.users().messages().list(userId="me", q=query, maxResults=200).execute()
     messages = response.get("messages", [])
     print(f"Found {len(messages)} emails to process")
+
+    # Cap the number of emails to process per run
+    if len(messages) > max_emails:
+        print(f"Capping to {max_emails} emails (remaining will be processed next run)")
+        messages = messages[:max_emails]
 
     listings: list[dict] = []
 
@@ -428,13 +449,19 @@ def transform(listings: list[dict]) -> pd.DataFrame:
     df["is_exterior"] = df["is_exterior"].fillna(False).astype(bool)
 
     # Extract city from address (last segment after final comma)
-    def _extract_city(addr: str | None) -> str | None:
-        if not addr:
+    def _extract_city(addr: object) -> str | None:
+        if not addr or not isinstance(addr, str):
             return None
         parts = [p.strip() for p in addr.split(",")]
         return parts[-1] if parts else None
 
     df["city"] = df["address"].apply(_extract_city)
+
+    # Drop listings without city — can't assign neighbourhood or score
+    no_city_count = df["city"].isna().sum()
+    if no_city_count:
+        print(f"Dropping {no_city_count} listings without city")
+        df = df.dropna(subset=["city"]).reset_index(drop=True)
 
     # Dedup by (property_id, email_id)
     df = df.drop_duplicates(subset=["property_id", "email_id"]).reset_index(drop=True)
@@ -492,18 +519,22 @@ def load(df: pd.DataFrame) -> int:
 # ---------------------------------------------------------------------------
 
 
-def post_process(email_ids: list[str]) -> None:
+def post_process(
+    email_ids: list[str],
+    creds: Credentials | None = None,
+) -> None:
     """Archive processed emails by adding a 'BarrioScout/Procesado' label.
 
     Creates the label if it does not exist. Removes INBOX label to archive.
 
     Args:
         email_ids: Gmail message IDs to mark as processed.
+        creds: Pre-built OAuth2 credentials forwarded to ``get_gmail_service``.
     """
     if not email_ids:
         return
 
-    service = get_gmail_service()
+    service = get_gmail_service(creds=creds)
 
     # Find or create the label
     existing_labels = service.users().labels().list(userId="me").execute().get("labels", [])
