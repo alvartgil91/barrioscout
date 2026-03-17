@@ -1,0 +1,17 @@
+# Ignore files not needed by the Cloud Function
+.git/
+.env
+.env.*
+credentials/
+data/
+notebooks/
+tests/
+sql/
+*.log
+*.md
+*.bak
+__pycache__/
+.venv/
+.mypy_cache/
+.pytest_cache/
+cloud_functions/

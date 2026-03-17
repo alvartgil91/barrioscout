@@ -1,0 +1,10 @@
+functions-framework
+google-cloud-secret-manager
+google-cloud-bigquery
+google-auth-oauthlib
+google-api-python-client
+beautifulsoup4
+lxml
+requests
+pandas
+python-dotenv

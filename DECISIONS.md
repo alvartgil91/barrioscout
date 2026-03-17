@@ -135,6 +135,40 @@ Este archivo sirve como documentación para el blog y referencia futura.
 
 ---
 
+## Fase 2.7 — Automatización: Cloud Function para Idealista emails
+
+### Decisión: Cloud Function 2nd gen + Cloud Scheduler (cada 6h)
+- **Motivación**: El pipeline de Idealista emails (`idealista_emails.py`) funcionaba solo con ejecución manual local. Con ~50 emails/día, necesita automatización para no perder datos.
+- **Alternativas descartadas**:
+  - Cron local / VPS: requiere máquina encendida 24/7 (coste electricidad o VPS)
+  - Cloud Run Job: viable pero más complejo de configurar que Cloud Function para un trigger simple
+  - Workflow / Composer: sobreingeniería para un solo pipeline
+
+### Decisión: Desplegar desde raíz del repo (--source=.)
+- **Motivación**: Evitar duplicar código de `src/` y `config/` en un subdirectorio separado.
+- **Mecanismo**: `main.py` en la raíz como entry point. Cloud Functions empaqueta todo el directorio. El deploy script intercambia temporalmente `requirements.txt` con `cf_requirements.txt` y lo restaura al terminar.
+- **Trade-off**: Se sube más código del necesario al Cloud Function (otros módulos de ingesta, notebooks, etc.), pero el bundle sigue siendo pequeño (<5MB) y simplifica enormemente el mantenimiento.
+
+### Decisión: OAuth token en Secret Manager con refresh automático
+- **Flujo**: Token almacenado en `gmail-oauth-token`. Si expira, la Cloud Function lo refresca con `creds.refresh()` y escribe una nueva versión del secreto.
+- **Riesgo**: Apps OAuth en modo "testing" revocan refresh tokens tras 7 días. La app debe estar en modo "production" o "internal" (Workspace).
+- **Fallback**: Si el token no se puede refrescar, la función falla con un error claro indicando que hay que regenerar localmente.
+
+### Decisión: max_emails=50 por ejecución
+- **Motivación**: Con ~50 emails × 3 intentos geocoding × 1.1s = hasta 165s por batch. Mantiene la ejecución dentro del timeout de 540s incluso con backlog.
+- **Mecanismo**: `extract(max_emails=50)`. Los emails no procesados se recogen en la siguiente ejecución (cada 6h).
+
+### Decisión: Service account dedicada (barrioscout-cf)
+- **Roles**: secretmanager.secretAccessor, secretmanager.secretVersionAdder, bigquery.dataEditor, bigquery.jobUser.
+- **Principio de mínimo privilegio**: Sin acceso a otros recursos del proyecto.
+
+### Decisión: Zero breaking changes en pipeline local
+- **`get_gmail_service(creds=None)`**: Si no se pasan credenciales, funciona igual que antes (archivos locales + browser flow).
+- **`extract(max_emails=200)`**: El default de 200 mantiene el comportamiento original para ejecución local.
+- **`config/settings.py`**: `GMAIL_TOKEN_PATH` y `GMAIL_CREDENTIALS_PATH` leen de env vars con fallback al valor original.
+
+---
+
 ## Fases planificadas
 
 | Fase | Descripción | Sesiones estimadas |

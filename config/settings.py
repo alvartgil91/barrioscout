@@ -9,6 +9,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
+# Environment detection
+# ---------------------------------------------------------------------------
+
+# Cloud Run / Cloud Functions 2nd gen set K_SERVICE automatically
+IS_CLOUD_FUNCTION: bool = os.getenv("K_SERVICE", "") != ""
+
+# ---------------------------------------------------------------------------
 # GCP / BigQuery
 # ---------------------------------------------------------------------------
 
@@ -98,8 +105,8 @@ MINISTERIO_VALOR_TASADO_XLS: str = "data/raw/ministerio_valor_tasado_municipio.x
 # ---------------------------------------------------------------------------
 # Gmail API (Idealista email alerts)
 # ---------------------------------------------------------------------------
-GMAIL_CREDENTIALS_PATH: str = "credentials/gmail_oauth.json"
-GMAIL_TOKEN_PATH: str = "credentials/gmail_token.json"
+GMAIL_CREDENTIALS_PATH: str = os.getenv("GMAIL_CREDENTIALS_PATH", "credentials/gmail_oauth.json")
+GMAIL_TOKEN_PATH: str = os.getenv("GMAIL_TOKEN_PATH", "credentials/gmail_token.json")
 GMAIL_SCOPES: list[str] = ["https://www.googleapis.com/auth/gmail.modify"]
 IDEALISTA_EMAIL_SENDERS: list[str] = ["alertas@idealista.com", "no-reply@idealista.com", "noresponder@idealista.com"]
 NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
