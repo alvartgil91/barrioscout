@@ -1,6 +1,6 @@
 config {
   type: "view",
-  schema: "barrioscout_analytics",
+  schema: constants.STAGING_DATASET,
   description: "Cleaned and standardized neighborhoods and districts from raw layer. Parses WKT geometry, generates surrogate IDs, normalizes names."
 }
 

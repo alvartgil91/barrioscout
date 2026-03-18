@@ -1,6 +1,5 @@
 config {
   type: "table",
-  schema: "barrioscout_analytics",
   description: "Neighborhood dimension. One row per neighborhood (168 total: 131 Madrid + 37 Granada). Includes FK to dim_districts."
 }
 
