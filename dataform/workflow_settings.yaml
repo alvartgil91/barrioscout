@@ -1,0 +1,5 @@
+dataformCoreVersion: 3.0.48
+defaultProject: portfolio-alvartgil91
+defaultLocation: US
+defaultDataset: barrioscout_analytics
+defaultAssertionDataset: barrioscout_assertions

@@ -1,0 +1,37 @@
+config {
+  type: "view",
+  schema: "barrioscout_analytics",
+  description: "Cleaned and standardized neighborhoods and districts from raw layer. Parses WKT geometry, generates surrogate IDs, normalizes names."
+}
+
+WITH source AS (
+  SELECT * FROM ${ref("neighborhoods")}
+),
+
+cleaned AS (
+  SELECT
+    -- Surrogate ID: LOWER(city_name) for both neighborhoods and districts
+    LOWER(city || '_' || REPLACE(LOWER(name), ' ', '_')) AS area_id,
+    INITCAP(city) AS city,
+    level,
+    name AS area_name,
+    district_name,
+    code,
+    SAFE.ST_GEOGFROMTEXT(geometry_wkt) AS geometry,
+    _loaded_at
+  FROM source
+  WHERE name IS NOT NULL
+)
+
+SELECT
+  area_id,
+  city,
+  level,
+  area_name,
+  district_name,
+  code,
+  geometry,
+  -- Area in km2 (ST_AREA returns m2)
+  SAFE_DIVIDE(ST_AREA(geometry), 1000000) AS area_km2,
+  _loaded_at
+FROM cleaned

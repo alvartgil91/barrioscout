@@ -1,0 +1,16 @@
+config {
+  type: "table",
+  schema: "barrioscout_analytics",
+  description: "District dimension. One row per district (29 total: 21 Madrid + 8 Granada). Used as parent grouping for neighborhoods."
+}
+
+SELECT
+  -- district_id uses the same pattern as area_id but only for districts
+  area_id AS district_id,
+  city,
+  area_name AS district_name,
+  code AS district_code,
+  geometry,
+  area_km2
+FROM ${ref("stg_neighborhoods")}
+WHERE level = 'district'

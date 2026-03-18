@@ -1,0 +1,38 @@
+config {
+  type: "table",
+  schema: "barrioscout_analytics",
+  description: "Neighborhood dimension. One row per neighborhood (168 total: 131 Madrid + 37 Granada). Includes FK to dim_districts."
+}
+
+WITH neighborhoods AS (
+  SELECT
+    area_id AS neighborhood_id,
+    city,
+    area_name AS neighborhood_name,
+    district_name,
+    geometry,
+    area_km2
+  FROM ${ref("stg_neighborhoods")}
+  WHERE level = 'neighborhood'
+),
+
+districts AS (
+  SELECT
+    district_id,
+    district_name,
+    city
+  FROM ${ref("dim_districts")}
+)
+
+SELECT
+  n.neighborhood_id,
+  n.city,
+  n.neighborhood_name,
+  d.district_id,
+  d.district_name,
+  n.geometry,
+  n.area_km2
+FROM neighborhoods n
+LEFT JOIN districts d
+  ON n.city = d.city
+  AND n.district_name = d.district_name
