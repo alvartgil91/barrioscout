@@ -151,8 +151,17 @@ def geocode_address(address: str, city: str) -> tuple[float | None, float | None
 # ---------------------------------------------------------------------------
 
 
-_PROPERTY_TYPE_RE = re.compile(
-    r"^(Piso|Chalet|Ático|Casa|Estudio|Dúplex|Apartamento|Local|Garaje|Trastero|Oficina)",
+_PROPERTY_TYPES = (
+    r"(?:Piso|Chalet(?:\s+(?:adosado|pareado|independiente))?"
+    r"|Ático|Casa(?:\s+o\s+chalet(?:\s+independiente)?)?"
+    r"|Estudio|Dúplex|Apartamento|Local|Garaje|Trastero|Oficina)"
+)
+
+_PROPERTY_TYPE_RE = re.compile(rf"^{_PROPERTY_TYPES}", re.IGNORECASE)
+
+# Matches both "Piso en <address>" and fvp "Piso en venta en <address>"
+_TITLE_RE = re.compile(
+    rf"({_PROPERTY_TYPES})\s+en\s+(?:(?:venta|alquiler)\s+en\s+)?(.+)",
     re.IGNORECASE,
 )
 
@@ -176,21 +185,95 @@ def _parse_price(text: str) -> tuple[float | None, str]:
     return None, operation_type
 
 
+def _parse_spanish_price(text: str) -> float | None:
+    """Parse a Spanish-formatted price string like '179.900€' → 179900.0."""
+    m = re.search(r"([\d.]+)\s*€", text)
+    if m:
+        cleaned = m.group(1).replace(".", "")
+        try:
+            return float(cleaned)
+        except ValueError:
+            pass
+    return None
+
+
+def _extract_pricedrop_info(soup: BeautifulSoup) -> tuple[float | None, float | None]:
+    """Extract previous_price and discount_pct from priceDrop emails.
+
+    Looks for:
+    - <span style="text-decoration: line-through">179.900€</span> → previous_price
+    - ↓N% text adjacent to the strikethrough span → discount_pct
+
+    Returns:
+        (previous_price, discount_pct) — both None for non-priceDrop emails.
+    """
+    previous_price: float | None = None
+    discount_pct: float | None = None
+
+    # Strategy 1: find strikethrough span with price
+    for tag in soup.find_all(style=re.compile(r"line-through")):
+        text = tag.get_text(" ").strip()
+        price = _parse_spanish_price(text)
+        if price:
+            previous_price = price
+            # Look for ↓N% in the parent element
+            parent_text = tag.parent.get_text(" ").strip() if tag.parent else ""
+            pct_match = re.search(r"↓\s*(\d+)\s*%", parent_text)
+            if pct_match:
+                discount_pct = float(pct_match.group(1))
+            break
+
+    # Strategy 2 (fallback): parse header "bajado de X€ a Y€"
+    if previous_price is None:
+        for tag in soup.find_all(["td", "div", "span", "p"]):
+            text = tag.get_text(" ").strip()
+            m = re.search(r"bajado\s+de\s+([\d.]+)\s*€\s+a\s+([\d.]+)\s*€", text)
+            if m:
+                prev_cleaned = m.group(1).replace(".", "")
+                try:
+                    previous_price = float(prev_cleaned)
+                except ValueError:
+                    pass
+                if discount_pct is None and previous_price:
+                    new_cleaned = m.group(2).replace(".", "")
+                    try:
+                        new_price = float(new_cleaned)
+                        discount_pct = round(
+                            (previous_price - new_price) / previous_price * 100
+                        )
+                    except (ValueError, ZeroDivisionError):
+                        pass
+                break
+
+    return previous_price, discount_pct
+
+
+def _find_title_fallback(soup: BeautifulSoup) -> str | None:
+    """Find property title from standalone text elements when <img title> is missing.
+
+    Searches <td>, <div> elements for text matching the property type pattern
+    (e.g. "Piso en Calle X, Barrio, City" or fvp "Ático en venta en calle X, City").
+
+    Returns the matching text or None.
+    """
+    for tag in soup.find_all(["td", "div"]):
+        text = tag.get_text(" ").strip()
+        if len(text) > 200 or len(text) < 10:
+            continue
+        if _TITLE_RE.match(text):
+            # Verify it's a leaf-ish element (not a big container with mixed content)
+            if "€" not in text and "m²" not in text:
+                return text
+    return None
+
+
 def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
     """Parse all property listings from an Idealista email.
 
-    Idealista emails use table-based HTML where property data (image, title,
-    price, features) is spread across different table cells.  The most reliable
-    anchors are:
-      - <a href=".../inmueble/NNNNNN/..."> → property_id + image_url
-      - <img title="Piso en Calle X, Barrio, City"> → property_type + address
-      - <span>1.350 €/mes</span> → price + operation_type
-      - <td> 55 m² 2 hab. 2ª planta </td> → area / bedrooms / floor / is_exterior
-
-    For emails with multiple properties (daily/remarketing format), each
-    property has its own <a href="/inmueble/..."> containing an <img title>.
-    We match price/features to each property by scanning the elements that
-    follow the property link in document order.
+    Handles three template types:
+    - express_newAd_*: single property with img title, price, features
+    - express_priceDrop_*: same as newAd but with strikethrough old price + discount
+    - fvp: luxury property promotion with different HTML structure
 
     Args:
         soup: Parsed BeautifulSoup of the full email HTML.
@@ -228,12 +311,27 @@ def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
     if not anchors:
         return []
 
-    # Collect price spans and feature tds from the whole document
+    # Fix 1: Title fallback — search standalone text elements when img title missing
+    title_fallback: str | None = None
+    if not any(t for _, _, t, _ in anchors if t):
+        title_fallback = _find_title_fallback(soup)
+
+    # Fix 2: Collect price texts, skipping old-price elements from priceDrop emails
     price_texts: list[str] = []
     for tag in soup.find_all(["span", "td", "div"]):
         text = tag.get_text(" ").strip()
         if "€" in text and len(text) < 30 and re.search(r"\d", text):
+            # Skip cells with discount indicator
+            if "↓" in text:
+                continue
+            # Skip strikethrough spans (old price in priceDrop emails)
+            style = tag.get("style", "")
+            if "line-through" in style:
+                continue
             price_texts.append(text)
+
+    # Fix 3: Extract priceDrop info (previous_price, discount_pct)
+    previous_price, discount_pct = _extract_pricedrop_info(soup)
 
     feature_texts: list[str] = []
     for tag in soup.find_all(["td", "div", "span"]):
@@ -257,36 +355,39 @@ def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
             break
 
     listings: list[dict] = []
-    for idx, (prop_id, image_url, raw_title, _href) in enumerate(anchors):
-        # --- property_type + address from img title ---
+    for idx, (prop_id, image_url, raw_title, href) in enumerate(anchors):
+        # --- property_type + address ---
         property_type: str | None = None
         address: str | None = None
-        if raw_title:
-            # Format: "Piso en Calle X, Barrio, City" or "Piso en Barrio, City"
-            title_match = re.match(
-                r"(Piso|Chalet|Ático|Casa|Estudio|Dúplex|Apartamento|Local|Garaje|Trastero|Oficina)"
-                r"\s+en\s+(.+)",
-                raw_title,
-                re.IGNORECASE,
-            )
+
+        # Use raw_title from <img> or fallback from standalone text
+        effective_title = raw_title or title_fallback
+        if effective_title:
+            title_match = _TITLE_RE.match(effective_title)
             if title_match:
                 property_type = title_match.group(1).strip().capitalize()
                 address = title_match.group(2).strip()
+
+        # --- property_url (Fix 7) ---
+        property_url: str | None = None
+        url_match = re.search(r"(https?://www\.idealista\.com/inmueble/\d+/)", href)
+        if url_match:
+            property_url = url_match.group(1)
 
         # --- price: pick the idx-th price (one per property in multi-card emails) ---
         price: float | None = None
         operation_type: str = "sale"
         if idx < len(price_texts):
             price, operation_type = _parse_price(price_texts[idx])
-        # Also check campaign hint from href if price parsing is ambiguous
-        if "rent" in _href and operation_type == "sale":
+        if "rent" in href and operation_type == "sale":
             operation_type = "rent"
 
         # --- features ---
         area_m2: float | None = None
         bedrooms: int | None = None
         floor: int | None = None
-        is_exterior: bool = False
+        is_exterior: bool | None = None  # Fix 4: default to NULL
+        has_elevator: bool | None = None  # Fix 5: fvp elevator
         if idx < len(feature_texts):
             ft = feature_texts[idx]
             m2 = re.search(r"(\d+)\s*m²", ft)
@@ -295,10 +396,25 @@ def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
             bed = re.search(r"(\d+)\s*hab", ft)
             if bed:
                 bedrooms = int(bed.group(1))
+            # Fix 6: handle "bajo" and "entreplanta" as floor 0
             fl = re.search(r"(\d+)[\wª]?\s*planta", ft)
             if fl:
                 floor = int(fl.group(1))
-            is_exterior = "exterior" in ft.lower()
+            elif "bajo" in ft.lower():
+                floor = 0
+            elif "entreplanta" in ft.lower():
+                floor = 0
+            # Fix 4: is_exterior only when explicitly found
+            ft_lower = ft.lower()
+            if "exterior" in ft_lower:
+                is_exterior = True
+            elif "interior" in ft_lower:
+                is_exterior = False
+            # Fix 5: has_elevator from feature text (common in fvp)
+            if "con ascensor" in ft_lower:
+                has_elevator = True
+            elif "sin ascensor" in ft_lower:
+                has_elevator = False
 
         listings.append(
             {
@@ -311,6 +427,10 @@ def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
                 "bedrooms": bedrooms,
                 "floor": floor,
                 "is_exterior": is_exterior,
+                "has_elevator": has_elevator,
+                "previous_price": previous_price,
+                "discount_pct": discount_pct,
+                "property_url": property_url,
                 "description": description,
                 "image_url": image_url,
             }
@@ -352,6 +472,7 @@ def _extract_campaign_type(soup: BeautifulSoup) -> str | None:
 def extract(
     max_emails: int = 200,
     creds: Credentials | None = None,
+    reprocess: bool = False,
 ) -> list[dict]:
     """Fetch Idealista alert emails from Gmail and parse property listings.
 
@@ -363,20 +484,35 @@ def extract(
                     time bounded (especially for geocoding). Remaining emails
                     will be picked up in the next run.
         creds: Pre-built OAuth2 credentials forwarded to ``get_gmail_service``.
+        reprocess: When True, include already-processed emails (for full re-runs
+                   after parser improvements).
 
     Returns:
         List of dicts, one per property listing found across all emails.
     """
     service = get_gmail_service(creds=creds)
 
-    # Build search query: emails from Idealista senders, not yet processed
+    # Build search query: emails from Idealista senders
     # in:anywhere includes spam/trash/archive in addition to inbox
     sender_query = " OR ".join(f"from:{s}" for s in IDEALISTA_EMAIL_SENDERS)
-    query = f"in:anywhere ({sender_query}) -label:BarrioScout/Procesado"
+    if reprocess:
+        query = f"in:anywhere ({sender_query}) label:BarrioScout/Procesado"
+    else:
+        query = f"in:anywhere ({sender_query}) -label:BarrioScout/Procesado"
 
     print(f"Searching Gmail: {query}")
-    response = service.users().messages().list(userId="me", q=query, maxResults=200).execute()
-    messages = response.get("messages", [])
+    messages: list[dict] = []
+    response = service.users().messages().list(userId="me", q=query, maxResults=500).execute()
+    messages.extend(response.get("messages", []))
+    # Paginate to collect all matching emails
+    while "nextPageToken" in response and len(messages) < max_emails:
+        response = (
+            service.users()
+            .messages()
+            .list(userId="me", q=query, maxResults=500, pageToken=response["nextPageToken"])
+            .execute()
+        )
+        messages.extend(response.get("messages", []))
     print(f"Found {len(messages)} emails to process")
 
     # Cap the number of emails to process per run
@@ -446,7 +582,14 @@ def transform(listings: list[dict]) -> pd.DataFrame:
     df["area_m2"] = pd.to_numeric(df["area_m2"], errors="coerce")
     df["bedrooms"] = pd.to_numeric(df["bedrooms"], errors="coerce").astype("Int64")
     df["floor"] = pd.to_numeric(df["floor"], errors="coerce").astype("Int64")
-    df["is_exterior"] = df["is_exterior"].fillna(False).astype(bool)
+    df["previous_price"] = pd.to_numeric(df["previous_price"], errors="coerce")
+    df["discount_pct"] = pd.to_numeric(df["discount_pct"], errors="coerce")
+
+    # Fix 8: area_m2 < 5 is a stray regex match, not a real property
+    df.loc[df["area_m2"] < 5, "area_m2"] = pd.NA
+
+    # Fix 4: keep is_exterior as nullable boolean (None = unknown)
+    df["is_exterior"] = df["is_exterior"].astype("boolean")
 
     # Extract city from address (last segment after final comma)
     def _extract_city(addr: object) -> str | None:
@@ -487,7 +630,8 @@ def transform(listings: list[dict]) -> pd.DataFrame:
 
     columns = [
         "property_id", "operation_type", "property_type", "address", "city",
-        "price", "area_m2", "bedrooms", "floor", "is_exterior", "description",
+        "price", "previous_price", "discount_pct", "area_m2", "bedrooms",
+        "floor", "is_exterior", "has_elevator", "property_url", "description",
         "image_url", "lat", "lon", "email_date", "campaign_type", "email_id",
     ]
     # Only keep columns that exist (defensive)
@@ -573,9 +717,25 @@ def post_process(
 
 def main() -> None:
     """Run the full Idealista email ingestion pipeline."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Idealista email ingestion")
+    parser.add_argument(
+        "--reprocess",
+        action="store_true",
+        help="Re-process already-labelled emails (for full re-runs after parser changes)",
+    )
+    parser.add_argument(
+        "--max-emails",
+        type=int,
+        default=200,
+        help="Max emails to process per run (default: 200)",
+    )
+    args = parser.parse_args()
+
     print("=== Idealista Email Ingestion ===")
 
-    listings = extract()
+    listings = extract(max_emails=args.max_emails, reprocess=args.reprocess)
     if not listings:
         print("No new listings found.")
         return
@@ -590,12 +750,15 @@ def main() -> None:
     if "operation_type" in df.columns:
         print(df["operation_type"].value_counts().to_string())
     if "city" in df.columns:
-        print(df["city"].value_counts().to_string())
+        print(f"\nTop 10 cities:")
+        print(df["city"].value_counts().head(10).to_string())
 
     load(df)
 
-    email_ids = list({row["email_id"] for row in listings})
-    post_process(email_ids)
+    # Skip post_process when reprocessing (emails already labelled)
+    if not args.reprocess:
+        email_ids = list({row["email_id"] for row in listings})
+        post_process(email_ids)
 
     print("\nDone.")
 

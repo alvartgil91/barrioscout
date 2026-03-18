@@ -51,6 +51,9 @@ credentials/
 *.log
 logs/
 
+# Email audit samples (HTML files from Gmail)
+reports/email_samples/
+
 # pytest / coverage
 .pytest_cache/
 .coverage
