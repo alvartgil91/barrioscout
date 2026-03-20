@@ -26,6 +26,7 @@ _TRANSPORT_EXTRA: list[tuple[str, str]] = [
     ("railway", "station"),
     ("railway", "tram_stop"),
     ("public_transport", "station"),
+    ("highway", "bus_stop"),
 ]
 
 _OSM_TYPES = ("node", "way", "relation")
