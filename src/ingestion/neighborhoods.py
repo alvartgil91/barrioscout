@@ -16,6 +16,7 @@ Dependencies: requests, shapely, pyproj, pandas
 from __future__ import annotations
 
 import argparse
+import json
 import time
 
 import pandas as pd
@@ -126,7 +127,10 @@ def _extract_madrid() -> list[dict]:
     print("  Downloading Madrid barrios TopoJSON...")
     resp = requests.get(_MADRID_BARRIOS_URL, timeout=30)
     resp.raise_for_status()
-    topo = resp.json()
+    # Use json.loads(resp.content) instead of resp.json() to force UTF-8 decoding.
+    # resp.json() relies on resp.encoding, which requests may mis-detect as latin-1
+    # when the server omits charset in Content-Type, causing mojibake on accented chars.
+    topo = json.loads(resp.content)
     features = _decode_topojson(topo, "BARRIOS")
     print(f"  Decoded {len(features)} barrios")
 
@@ -145,7 +149,7 @@ def _extract_madrid() -> list[dict]:
     print("  Downloading Madrid distritos TopoJSON...")
     resp = requests.get(_MADRID_DISTRITOS_URL, timeout=30)
     resp.raise_for_status()
-    topo = resp.json()
+    topo = json.loads(resp.content)
     features = _decode_topojson(topo, "DISTRITOS")
     print(f"  Decoded {len(features)} distritos")
 
