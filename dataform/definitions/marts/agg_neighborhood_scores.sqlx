@@ -126,9 +126,12 @@ scores AS (
       1
     ) AS walkability_score,
 
-    -- building_quality_score: NULL when no Catastro data for neighborhood
+    -- building_quality_score: NULL when no Catastro data for neighborhood.
+    -- IMPORTANT: must check pct_post_2000 IS NOT NULL, not building_quality_prank IS NOT NULL.
+    -- PERCENT_RANK() never returns NULL; neighborhoods with NULL pct_post_2000 get high
+    -- NULLS-LAST rank values, which would produce spuriously high scores without this guard.
     CASE
-      WHEN building_quality_prank IS NOT NULL
+      WHEN pct_post_2000 IS NOT NULL
       THEN ROUND(building_quality_prank * 100, 1)
     END AS building_quality_score,
 
