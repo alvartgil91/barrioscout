@@ -1,0 +1,25 @@
+config {
+  type: "view",
+  schema: constants.STAGING_DATASET,
+  tags: ["phase3"],
+  description: "Residential buildings from Catastro INSPIRE. Filters to current_use=1_residential, cleans year_built outliers, adds GEOGRAPHY point."
+}
+
+SELECT
+  cadastral_ref,
+  current_use,
+  -- year_built is FLOAT64 in raw; cast to INT and null out implausible values
+  CASE
+    WHEN year_built IS NULL THEN NULL
+    WHEN year_built < 1800 THEN NULL
+    WHEN year_built > EXTRACT(YEAR FROM CURRENT_DATE()) THEN NULL
+    ELSE CAST(year_built AS INT64)
+  END AS year_built,
+  latitude  AS lat,
+  longitude AS lon,
+  ST_GEOGPOINT(longitude, latitude) AS point,
+  _loaded_at
+FROM ${ref("catastro_buildings")}
+WHERE current_use = '1_residential'
+  AND latitude  IS NOT NULL
+  AND longitude IS NOT NULL

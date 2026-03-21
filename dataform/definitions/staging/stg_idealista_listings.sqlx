@@ -1,0 +1,56 @@
+config {
+  type: "view",
+  schema: constants.STAGING_DATASET,
+  tags: ["phase3"],
+  description: "Deduplicated Idealista listing observations. One row per (property_id × day). Cleans area_m2, adds price_per_m2."
+}
+
+WITH source AS (
+  SELECT * FROM ${ref("idealista_listings")}
+),
+
+deduped AS (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (
+      PARTITION BY property_id, DATE(email_date)
+      ORDER BY email_date DESC
+    ) AS rn
+  FROM source
+),
+
+cleaned AS (
+  SELECT
+    property_id,
+    operation_type,
+    property_type,
+    address,
+    city,
+    price,
+    previous_price,
+    discount_pct,
+    -- Suppress implausible area values (< 5m² are parser artefacts)
+    NULLIF(CASE WHEN area_m2 < 5 THEN NULL ELSE area_m2 END, 0) AS area_m2,
+    bedrooms,
+    floor,
+    is_exterior,
+    has_elevator,
+    property_url,
+    description,
+    image_url,
+    lat,
+    lon,
+    email_date,
+    campaign_type,
+    email_id,
+    _loaded_at
+  FROM deduped
+  WHERE rn = 1
+    AND lat IS NOT NULL
+    AND lon IS NOT NULL
+)
+
+SELECT
+  *,
+  SAFE_DIVIDE(price, area_m2) AS price_per_m2
+FROM cleaned

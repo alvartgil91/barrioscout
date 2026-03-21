@@ -101,6 +101,30 @@ python tests/test_sources.py
 
 ---
 
+## Dataform Pipeline (Phase 3 — complete)
+
+Run with: `cd dataform && dataform run --tags phase3`
+
+| Model | Type | Dataset | Description |
+|-------|------|---------|-------------|
+| `stg_idealista_listings` | view | barrioscout_staging | Deduped listings with price_per_m2 |
+| `stg_catastro_buildings` | view | barrioscout_staging | Residential buildings with ST_GEOGPOINT |
+| `stg_osm_pois` | view | barrioscout_staging | OSM POIs with INITCAP(city) normalisation |
+| `fct_listing_observations` | table | barrioscout_analytics | One row per (property_id × day), spatial join to neighborhoods |
+| `int_listings_latest` | table | barrioscout_analytics | Latest snapshot + lifecycle stats per property |
+| `int_neighborhood_pois` | table | barrioscout_analytics | POI counts by category per neighborhood |
+| `int_neighborhood_buildings` | table | barrioscout_analytics | Catastro building age stats per neighborhood |
+| `int_neighborhood_listings` | table | barrioscout_analytics | Median prices, counts, rental yield per neighborhood |
+| `agg_neighborhood_scores` | table | barrioscout_analytics | Final score card: 5 sub-scores + composite + raw metrics |
+
+**Key facts:**
+- 166 neighborhoods total: 131 Madrid + 35 Granada
+- `dim_neighborhoods` deduplicates two Granada neighborhoods that appear with multiple district assignments in the source (Joaquina Eguaras, San Matías-Realejo)
+- All sub-scores use `PERCENT_RANK() OVER (PARTITION BY city ...)` — rankings are within-city
+- Composite redistributes weight proportionally among non-NULL sub-scores (walkability always present; others depend on data availability)
+
+---
+
 ## Cost Target
 
 **0 €/month** — all GCP usage within free tier limits:

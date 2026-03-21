@@ -1,6 +1,6 @@
 config {
   type: "table",
-  description: "Neighborhood dimension. One row per neighborhood (168 total: 131 Madrid + 37 Granada). Includes FK to dim_districts."
+  description: "Neighborhood dimension. One row per neighborhood (168 total: 131 Madrid + 37 Granada). Includes FK to dim_districts. Deduplication keeps first district assignment for neighborhoods that span multiple districts in the source."
 }
 
 WITH neighborhoods AS (
@@ -13,6 +13,14 @@ WITH neighborhoods AS (
     area_km2
   FROM ${ref("stg_neighborhoods")}
   WHERE level = 'neighborhood'
+),
+
+-- Deduplicate: two Granada neighborhoods appear with multiple district_name values
+-- in stg_neighborhoods (Joaquina Eguaras: Beiro+Norte, San Matías-Realejo: duplicate row).
+-- Keep one row per neighborhood_id using the alphabetically-first district_name.
+neighborhoods_deduped AS (
+  SELECT * FROM neighborhoods
+  QUALIFY ROW_NUMBER() OVER (PARTITION BY neighborhood_id ORDER BY district_name ASC) = 1
 ),
 
 districts AS (
@@ -31,7 +39,7 @@ SELECT
   d.district_name,
   n.geometry,
   n.area_km2
-FROM neighborhoods n
+FROM neighborhoods_deduped n
 LEFT JOIN districts d
   ON n.city = d.city
   AND n.district_name = d.district_name

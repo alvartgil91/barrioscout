@@ -1,0 +1,20 @@
+config {
+  type: "view",
+  schema: constants.STAGING_DATASET,
+  tags: ["phase3"],
+  description: "OSM POIs with normalised city names (title case to match dim_neighborhoods) and GEOGRAPHY point."
+}
+
+SELECT
+  CAST(osm_id AS STRING) AS osm_id,
+  INITCAP(city)          AS city,   -- 'granada' → 'Granada', 'madrid' → 'Madrid'
+  category,
+  osm_type,
+  name,
+  lat,
+  lon,
+  ST_GEOGPOINT(lon, lat) AS point,
+  _loaded_at
+FROM ${ref("osm_pois")}
+WHERE lat IS NOT NULL
+  AND lon IS NOT NULL

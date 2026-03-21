@@ -1,0 +1,73 @@
+config {
+  type: "table",
+  tags: ["phase3"],
+  description: "Per-neighbourhood listing aggregates: sale/rent counts, median prices per m², gross rental yield. Price medians and yield are NULL where sample size < 3 (insufficient for reliable estimation)."
+}
+
+WITH base AS (
+  SELECT
+    neighborhood_id,
+    neighborhood_city AS city,
+    operation_type,
+    price_per_m2,
+    has_price_drop
+  FROM ${ref("int_listings_latest")}
+  WHERE neighborhood_id IS NOT NULL
+    AND price_per_m2    IS NOT NULL
+    AND price_per_m2     > 0
+),
+
+counts AS (
+  SELECT
+    neighborhood_id,
+    city,
+    COUNTIF(operation_type = 'sale') AS sale_count,
+    COUNTIF(operation_type = 'rent') AS rent_count,
+    COUNT(*)                         AS total_listings,
+    COUNTIF(has_price_drop)          AS pricedrop_count
+  FROM base
+  GROUP BY neighborhood_id, city
+),
+
+-- Compute medians in separate filtered CTEs to avoid APPROX_QUANTILES on mixed types
+sale_medians AS (
+  SELECT
+    neighborhood_id,
+    APPROX_QUANTILES(price_per_m2, 2)[SAFE_OFFSET(1)] AS median_sale_price_m2
+  FROM base
+  WHERE operation_type = 'sale'
+  GROUP BY neighborhood_id
+),
+
+rent_medians AS (
+  SELECT
+    neighborhood_id,
+    APPROX_QUANTILES(price_per_m2, 2)[SAFE_OFFSET(1)] AS median_rent_price_m2
+  FROM base
+  WHERE operation_type = 'rent'
+  GROUP BY neighborhood_id
+)
+
+SELECT
+  c.neighborhood_id,
+  c.city,
+  c.sale_count,
+  c.rent_count,
+  c.total_listings,
+  SAFE_DIVIDE(c.pricedrop_count, c.total_listings) AS pricedrop_ratio,
+
+  -- Suppress medians when sample is too small for reliable estimation
+  CASE WHEN c.sale_count >= 3 THEN sm.median_sale_price_m2 ELSE NULL END AS median_sale_price_m2,
+  CASE WHEN c.rent_count >= 3 THEN rm.median_rent_price_m2 ELSE NULL END AS median_rent_price_m2,
+
+  -- Gross rental yield: (monthly rent/m² × 12) / sale price/m² × 100
+  -- Requires ≥3 of each type for both inputs to be non-NULL
+  CASE
+    WHEN c.sale_count >= 3 AND c.rent_count >= 3
+    THEN SAFE_DIVIDE(rm.median_rent_price_m2 * 12, sm.median_sale_price_m2) * 100
+    ELSE NULL
+  END AS gross_rental_yield_pct
+
+FROM counts            AS c
+LEFT JOIN sale_medians AS sm USING (neighborhood_id)
+LEFT JOIN rent_medians AS rm USING (neighborhood_id)

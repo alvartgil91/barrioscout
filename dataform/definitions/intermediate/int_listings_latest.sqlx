@@ -1,0 +1,50 @@
+config {
+  type: "table",
+  tags: ["phase3"],
+  description: "One row per property_id: the latest observation plus lifecycle aggregates (first_seen, last_seen, times_seen, has_price_drop). Used as input for neighbourhood listing aggregations."
+}
+
+WITH all_obs AS (
+  SELECT * FROM ${ref("fct_listing_observations")}
+),
+
+-- Lifecycle stats aggregated across all observations for each property
+lifecycle AS (
+  SELECT
+    property_id,
+    MIN(email_date)                                                       AS first_seen_at,
+    MAX(email_date)                                                       AS last_seen_at,
+    COUNT(*)                                                              AS times_seen,
+    MAX(IF(campaign_type LIKE 'express_priceDrop%', 1, 0)) = 1           AS has_price_drop,
+    DATE_DIFF(DATE(MAX(email_date)), DATE(MIN(email_date)), DAY)          AS days_on_market
+  FROM all_obs
+  GROUP BY property_id
+),
+
+-- Latest snapshot per property (most recent email_date)
+latest AS (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (PARTITION BY property_id ORDER BY email_date DESC) AS rn
+  FROM all_obs
+)
+
+SELECT
+  l.property_id,
+  l.neighborhood_id,
+  l.neighborhood_city,
+  l.operation_type,
+  l.price,
+  l.price_per_m2,
+  l.area_m2,
+  l.bedrooms,
+  l.campaign_type,
+  l.property_url,
+  lc.first_seen_at,
+  lc.last_seen_at,
+  lc.times_seen,
+  lc.has_price_drop,
+  lc.days_on_market
+FROM latest AS l
+JOIN lifecycle AS lc USING (property_id)
+WHERE l.rn = 1

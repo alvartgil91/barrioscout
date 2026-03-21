@@ -1,0 +1,248 @@
+config {
+  type: "table",
+  tags: ["phase3"],
+  description: "Neighborhood score card. Joins dim_neighborhoods + int_neighborhood_pois + int_neighborhood_buildings + int_neighborhood_listings. Computes PERCENT_RANK()-based 0–100 sub-scores within city. Composite score redistributes weight proportionally among non-NULL sub-scores."
+}
+
+WITH dim AS (
+  SELECT
+    neighborhood_id,
+    neighborhood_name,
+    city,
+    district_id,
+    district_name,
+    area_km2
+  FROM ${ref("dim_neighborhoods")}
+),
+
+pois AS (
+  SELECT * FROM ${ref("int_neighborhood_pois")}
+),
+
+buildings AS (
+  SELECT * FROM ${ref("int_neighborhood_buildings")}
+),
+
+listings AS (
+  SELECT * FROM ${ref("int_neighborhood_listings")}
+),
+
+-- ─────────────────────────────────────────────
+-- PERCENTILE RANKS  (all within-city, NULLS LAST)
+-- ─────────────────────────────────────────────
+ranked AS (
+  SELECT
+    d.neighborhood_id,
+    d.neighborhood_name,
+    d.city,
+    d.district_id,
+    d.district_name,
+    d.area_km2,
+
+    -- ── raw metrics ──────────────────────────
+    p.health_count,
+    p.education_count,
+    p.shopping_count,
+    p.transport_count,
+    p.total_pois,
+    p.pois_per_km2,
+
+    b.residential_buildings,
+    b.avg_year_built,
+    b.median_year_built,
+    b.pct_post_2000,
+    b.pct_pre_1960,
+
+    l.sale_count,
+    l.rent_count,
+    l.total_listings,
+    l.pricedrop_ratio,
+    l.median_sale_price_m2,
+    l.median_rent_price_m2,
+    l.gross_rental_yield_pct,
+
+    -- ── walkability components ────────────────
+    -- Higher POI density per km² = better walkability
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY COALESCE(p.health_count,    0) ASC  NULLS LAST
+    ) AS health_prank,
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY COALESCE(p.education_count, 0) ASC  NULLS LAST
+    ) AS education_prank,
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY COALESCE(p.shopping_count,  0) ASC  NULLS LAST
+    ) AS shopping_prank,
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY COALESCE(p.transport_count, 0) ASC  NULLS LAST
+    ) AS transport_prank,
+
+    -- ── building quality ──────────────────────
+    -- Higher pct_post_2000 = newer stock = better
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY b.pct_post_2000 ASC NULLS LAST
+    ) AS building_quality_prank,
+
+    -- ── price (affordability) ─────────────────
+    -- Lower sale price/m² = more affordable = higher score (inverted rank)
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY l.median_sale_price_m2 DESC NULLS LAST
+    ) AS price_prank,
+
+    -- ── yield ────────────────────────────────
+    -- Higher gross rental yield = better investment
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY l.gross_rental_yield_pct ASC NULLS LAST
+    ) AS yield_prank,
+
+    -- ── market dynamics components ────────────
+    -- Higher listings density (supply) = more liquid market
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY
+        SAFE_DIVIDE(COALESCE(l.total_listings, 0), d.area_km2) ASC NULLS LAST
+    ) AS supply_density_prank,
+    -- Higher pricedrop ratio = more motivated sellers = interesting signal
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY l.pricedrop_ratio ASC NULLS LAST
+    ) AS pricedrop_prank
+
+  FROM dim AS d
+  LEFT JOIN pois      AS p USING (neighborhood_id)
+  LEFT JOIN buildings AS b USING (neighborhood_id)
+  LEFT JOIN listings  AS l USING (neighborhood_id)
+),
+
+-- ─────────────────────────────────────────────
+-- 0–100 SUB-SCORES
+-- (NULL when underlying metric is unavailable)
+-- ─────────────────────────────────────────────
+scores AS (
+  SELECT
+    *,
+
+    -- walkability_score: mean of 4 POI category percentile scores
+    -- POIs always available (COALESCE to 0 upstream), so never NULL
+    ROUND(
+      (health_prank + education_prank + shopping_prank + transport_prank) / 4.0 * 100,
+      1
+    ) AS walkability_score,
+
+    -- building_quality_score: NULL when no Catastro data for neighborhood
+    CASE
+      WHEN building_quality_prank IS NOT NULL
+      THEN ROUND(building_quality_prank * 100, 1)
+    END AS building_quality_score,
+
+    -- price_score: NULL when fewer than 3 sale listings
+    CASE
+      WHEN median_sale_price_m2 IS NOT NULL
+      THEN ROUND(price_prank * 100, 1)
+    END AS price_score,
+
+    -- yield_score: NULL when fewer than 3 sale or 3 rent listings
+    CASE
+      WHEN gross_rental_yield_pct IS NOT NULL
+      THEN ROUND(yield_prank * 100, 1)
+    END AS yield_score,
+
+    -- market_dynamics_score: NULL when total_listings < 5 (too sparse)
+    CASE
+      WHEN total_listings >= 5
+      THEN ROUND((supply_density_prank + pricedrop_prank) / 2.0 * 100, 1)
+    END AS market_dynamics_score
+
+  FROM ranked
+),
+
+-- ─────────────────────────────────────────────
+-- COMPOSITE SCORE (proportional weight redistribution)
+-- Weights: walkability 30%, building_quality 20%, price 20%, yield 20%, market 10%
+-- When a sub-score is NULL its weight is redistributed proportionally among non-NULLs
+-- ─────────────────────────────────────────────
+composite AS (
+  SELECT
+    *,
+
+    -- Flag each sub-score as available (1) or not (0)
+    1                                                   AS w_walkability_flag,
+    IF(building_quality_score IS NOT NULL, 1, 0)        AS w_building_flag,
+    IF(price_score            IS NOT NULL, 1, 0)        AS w_price_flag,
+    IF(yield_score            IS NOT NULL, 1, 0)        AS w_yield_flag,
+    IF(market_dynamics_score  IS NOT NULL, 1, 0)        AS w_market_flag,
+
+    -- Nominal weights
+    0.30  AS nom_w_walkability,
+    0.20  AS nom_w_building,
+    0.20  AS nom_w_price,
+    0.20  AS nom_w_yield,
+    0.10  AS nom_w_market
+
+  FROM scores
+)
+
+SELECT
+  neighborhood_id,
+  neighborhood_name,
+  city,
+  district_id,
+  district_name,
+  area_km2,
+
+  -- ── raw metrics ──────────────────────────────────────────────────────────
+  health_count,
+  education_count,
+  shopping_count,
+  transport_count,
+  total_pois,
+  pois_per_km2,
+
+  residential_buildings,
+  avg_year_built,
+  median_year_built,
+  pct_post_2000,
+  pct_pre_1960,
+
+  sale_count,
+  rent_count,
+  total_listings,
+  ROUND(pricedrop_ratio, 4)                AS pricedrop_ratio,
+  ROUND(median_sale_price_m2, 2)           AS median_sale_price_m2,
+  ROUND(median_rent_price_m2, 2)           AS median_rent_price_m2,
+  ROUND(gross_rental_yield_pct, 2)         AS gross_rental_yield_pct,
+
+  -- ── sub-scores ───────────────────────────────────────────────────────────
+  walkability_score,
+  building_quality_score,
+  price_score,
+  yield_score,
+  market_dynamics_score,
+
+  -- ── composite score ──────────────────────────────────────────────────────
+  -- Weighted average; NULL sub-scores excluded and their weight redistributed
+  ROUND(
+    SAFE_DIVIDE(
+      (walkability_score       * nom_w_walkability * w_walkability_flag)
+    + (COALESCE(building_quality_score, 0) * nom_w_building  * w_building_flag)
+    + (COALESCE(price_score,            0) * nom_w_price     * w_price_flag)
+    + (COALESCE(yield_score,            0) * nom_w_yield     * w_yield_flag)
+    + (COALESCE(market_dynamics_score,  0) * nom_w_market    * w_market_flag),
+      (nom_w_walkability * w_walkability_flag)
+    + (nom_w_building    * w_building_flag)
+    + (nom_w_price       * w_price_flag)
+    + (nom_w_yield       * w_yield_flag)
+    + (nom_w_market      * w_market_flag)
+    ),
+    1
+  ) AS composite_score,
+
+  -- ── coverage metadata ────────────────────────────────────────────────────
+  ROUND(
+    (w_walkability_flag + w_building_flag + w_price_flag + w_yield_flag + w_market_flag) / 5.0,
+    2
+  )                                        AS data_completeness,
+
+  (w_walkability_flag + w_building_flag + w_price_flag + w_yield_flag + w_market_flag)
+                                           AS available_sub_scores,
+
+  CURRENT_TIMESTAMP()                      AS scored_at
+
+FROM composite

@@ -1,0 +1,22 @@
+config {
+  type: "table",
+  tags: ["phase3"],
+  description: "Listing observations fact table. One row per (property_id × calendar day). Spatial join assigns each observation to a neighbourhood polygon. Listings outside Madrid/Granada polygons get neighborhood_id = NULL."
+}
+
+SELECT
+  l.property_id,
+  n.neighborhood_id,
+  n.city                AS neighborhood_city,
+  l.operation_type,
+  l.price,
+  l.price_per_m2,
+  l.area_m2,
+  l.bedrooms,
+  l.campaign_type,
+  l.property_url,
+  l.email_date,
+  l._loaded_at
+FROM ${ref("stg_idealista_listings")} AS l
+LEFT JOIN ${ref("dim_neighborhoods")}  AS n
+  ON ST_WITHIN(ST_GEOGPOINT(l.lon, l.lat), n.geometry)

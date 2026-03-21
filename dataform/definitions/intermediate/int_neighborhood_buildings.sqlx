@@ -1,0 +1,28 @@
+config {
+  type: "table",
+  tags: ["phase3"],
+  description: "Residential building statistics per neighbourhood from Catastro INSPIRE. Spatial join via ST_WITHIN. Neighbourhoods without Catastro coverage are excluded (NULL in joins downstream)."
+}
+
+WITH buildings_joined AS (
+  SELECT
+    n.neighborhood_id,
+    n.city,
+    b.year_built
+  FROM ${ref("stg_catastro_buildings")} AS b
+  JOIN ${ref("dim_neighborhoods")}       AS n
+    ON ST_WITHIN(b.point, n.geometry)
+  -- year_built must be valid to contribute to age stats
+  WHERE b.year_built IS NOT NULL
+)
+
+SELECT
+  neighborhood_id,
+  city,
+  COUNT(*)                                                                AS residential_buildings,
+  CAST(ROUND(AVG(year_built), 0) AS INT64)                               AS avg_year_built,
+  CAST(APPROX_QUANTILES(year_built, 2)[SAFE_OFFSET(1)] AS INT64)        AS median_year_built,
+  ROUND(COUNTIF(year_built >= 2000) * 100.0 / COUNT(*), 1)              AS pct_post_2000,
+  ROUND(COUNTIF(year_built  < 1960) * 100.0 / COUNT(*), 1)              AS pct_pre_1960
+FROM buildings_joined
+GROUP BY neighborhood_id, city

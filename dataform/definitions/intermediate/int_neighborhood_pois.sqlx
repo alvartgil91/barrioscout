@@ -1,0 +1,46 @@
+config {
+  type: "table",
+  tags: ["phase3"],
+  description: "POI counts per neighbourhood by category. Spatial join via ST_WITHIN. Neighbourhoods with zero POIs in a category show 0 (not NULL) via outer join to dim."
+}
+
+WITH pois_joined AS (
+  SELECT
+    n.neighborhood_id,
+    n.city,
+    n.area_km2,
+    p.category
+  FROM ${ref("stg_osm_pois")}       AS p
+  JOIN ${ref("dim_neighborhoods")}   AS n
+    ON ST_WITHIN(p.point, n.geometry)
+    -- City guard: prevents edge-case cross-city assignments on adjacent bboxes
+    AND p.city = n.city
+),
+
+poi_counts AS (
+  SELECT
+    neighborhood_id,
+    city,
+    ANY_VALUE(area_km2)                        AS area_km2,
+    COUNTIF(category = 'health')               AS health_count,
+    COUNTIF(category = 'education')            AS education_count,
+    COUNTIF(category = 'shopping')             AS shopping_count,
+    COUNTIF(category = 'transport')            AS transport_count,
+    COUNT(*)                                   AS total_pois
+  FROM pois_joined
+  GROUP BY neighborhood_id, city
+)
+
+SELECT
+  -- Left join to dim ensures all 168 neighbourhoods appear (zero POIs → 0 counts)
+  d.neighborhood_id,
+  d.city,
+  d.area_km2,
+  COALESCE(p.health_count,    0) AS health_count,
+  COALESCE(p.education_count, 0) AS education_count,
+  COALESCE(p.shopping_count,  0) AS shopping_count,
+  COALESCE(p.transport_count, 0) AS transport_count,
+  COALESCE(p.total_pois,      0) AS total_pois,
+  SAFE_DIVIDE(COALESCE(p.total_pois, 0), d.area_km2) AS pois_per_km2
+FROM ${ref("dim_neighborhoods")} AS d
+LEFT JOIN poi_counts             AS p USING (neighborhood_id)
