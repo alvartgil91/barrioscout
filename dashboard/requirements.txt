@@ -1,0 +1,8 @@
+streamlit
+folium
+streamlit-folium
+plotly
+google-cloud-bigquery
+pandas
+pandas-gbq
+db-dtypes
