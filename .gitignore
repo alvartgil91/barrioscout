@@ -58,3 +58,7 @@ reports/email_samples/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Dataform
+node_modules/
+.df-credentials.json
