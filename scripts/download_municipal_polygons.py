@@ -24,6 +24,8 @@ MUNICIPALITIES: dict[str, list[str]] = {
         "Las Gabias", "Churriana de la Vega", "Atarfe", "Armilla",
         "Ogíjares", "Otura", "La Zubia", "Peligros", "Monachil",
         "Alhendín", "Vegas del Genil",
+        # Round 2: remaining orphans with 4+ listings
+        "Cenes de la Vega",
     ],
     "Madrid": [
         "Alcalá de Henares", "Torrejón de Ardoz", "Getafe", "Las Rozas de Madrid",
@@ -36,6 +38,9 @@ MUNICIPALITIES: dict[str, list[str]] = {
         "San Fernando de Henares", "Algete", "Cerceda",
         "Navalcarnero", "Pinto", "Ciempozuelos",
         "El Escorial", "Collado Villalba",
+        # Round 2: remaining orphans with 4+ listings
+        "Chinchón", "Pelayos de la Presa", "Guadarrama",
+        "Valdemorillo", "Sevilla la Nueva", "Cadalso de los Vidrios",
     ],
 }
 
