@@ -1,6 +1,6 @@
 config {
   type: "table",
-  description: "Neighborhood dimension. One row per neighborhood (168 total: 131 Madrid + 37 Granada). Includes FK to dim_districts. Deduplication keeps first district assignment for neighborhoods that span multiple districts in the source."
+  description: "Neighborhood dimension. One row per neighborhood (168 city neighborhoods + 44 metro municipalities). Includes FK to dim_districts. Deduplication keeps first district assignment for neighborhoods that span multiple districts in the source. metro_area derived from centroid latitude (>39.0 → Madrid, else Granada)."
 }
 
 WITH neighborhoods AS (
@@ -38,7 +38,11 @@ SELECT
   d.district_id,
   d.district_name,
   n.geometry,
-  n.area_km2
+  n.area_km2,
+  CASE
+    WHEN ST_Y(ST_CENTROID(n.geometry)) > 39.0 THEN 'Madrid'
+    ELSE 'Granada'
+  END AS metro_area
 FROM neighborhoods_deduped n
 LEFT JOIN districts d
   ON n.city = d.city

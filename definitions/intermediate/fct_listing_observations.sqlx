@@ -8,7 +8,8 @@ WITH exact_match AS (
   SELECT
     l.*,
     n.neighborhood_id,
-    n.city AS neighborhood_city
+    n.city       AS neighborhood_city,
+    n.metro_area AS neighborhood_metro_area
   FROM ${ref("stg_idealista_listings")} AS l
   LEFT JOIN ${ref("dim_neighborhoods")} AS n
     ON ST_WITHIN(ST_GEOGPOINT(l.lon, l.lat), n.geometry)
@@ -19,7 +20,8 @@ nearest_fallback AS (
     e.property_id,
     e.email_date,
     n.neighborhood_id,
-    n.city AS neighborhood_city
+    n.city       AS neighborhood_city,
+    n.metro_area AS neighborhood_metro_area
   FROM exact_match e
   CROSS JOIN ${ref("dim_neighborhoods")} n
   WHERE e.neighborhood_id IS NULL
@@ -32,8 +34,9 @@ nearest_fallback AS (
 
 SELECT
   e.property_id,
-  COALESCE(e.neighborhood_id, f.neighborhood_id)     AS neighborhood_id,
-  COALESCE(e.neighborhood_city, f.neighborhood_city) AS neighborhood_city,
+  COALESCE(e.neighborhood_id,           f.neighborhood_id)           AS neighborhood_id,
+  COALESCE(e.neighborhood_city,         f.neighborhood_city)         AS neighborhood_city,
+  COALESCE(e.neighborhood_metro_area,   f.neighborhood_metro_area)   AS metro_area,
   e.operation_type,
   e.price,
   e.price_per_m2,
