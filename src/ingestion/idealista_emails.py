@@ -2,7 +2,7 @@
 Ingestion module for Idealista property listings via Gmail email alerts.
 
 Reads emails from configured Idealista senders, parses property cards from HTML,
-geocodes addresses with Nominatim, and loads to BigQuery.
+geocodes addresses with Google Maps Geocoding API, and loads to BigQuery.
 
 Schema target: barrioscout_raw.idealista_listings
 
@@ -31,6 +31,8 @@ from config.settings import (
     GMAIL_CREDENTIALS_PATH,
     GMAIL_SCOPES,
     GMAIL_TOKEN_PATH,
+    GOOGLE_GEOCODING_API_KEY,
+    GOOGLE_GEOCODING_URL,
     IDEALISTA_EMAIL_SENDERS,
     NOMINATIM_URL,
     NOMINATIM_USER_AGENT,
@@ -83,67 +85,111 @@ def get_gmail_service(creds: Credentials | None = None) -> Resource:
 # ---------------------------------------------------------------------------
 
 
-def _nominatim_query(q: str) -> tuple[float, float] | None:
-    """Single Nominatim request. Sleeps 1.1s afterwards (rate limit). Returns (lat, lon) or None."""
-    try:
-        response = requests.get(
-            NOMINATIM_URL,
-            params={"q": q, "format": "json", "limit": 1, "countrycodes": "es"},
-            headers={"User-Agent": NOMINATIM_USER_AGENT},
-            timeout=10,
-        )
-        response.raise_for_status()
-        results = response.json()
-        if results:
-            return float(results[0]["lat"]), float(results[0]["lon"])
-    except Exception as exc:
-        print(f"  [geocode] Request failed for '{q}': {exc}")
-    finally:
-        time.sleep(1.1)
-    return None
+def geocode_address(address: str, city: str) -> tuple[float | None, float | None, str | None]:
+    """Geocode a Spanish property address using Google Maps Geocoding API.
 
+    Attempt 1: {address}, {city}, Spain  (full address)
+    Attempt 2: {city}, Spain             (only if attempt 1 gives ZERO_RESULTS)
 
-def geocode_address(address: str, city: str) -> tuple[float | None, float | None]:
-    """Geocode a Spanish property address using Nominatim with progressive fallback.
-
-    Attempt 1: full address as-is + countrycodes=es
-    Attempt 2: first segment of address (street + number) + city + España
-    Attempt 3: city + España only
-
-    Respects Nominatim ToS: 1.1s sleep after every request.
+    Rate limit: 0.05s sleep after every request (~20 QPS).
 
     Args:
         address: Street address (e.g. "Calle de Alcántara, Goya, Madrid").
         city: City name for disambiguation (e.g. "Madrid").
 
     Returns:
-        (lat, lon) or (None, None) if all attempts fail.
+        (lat, lon, geocode_level) — geocode_level is the Google location_type
+        string (ROOFTOP, RANGE_INTERPOLATED, GEOMETRIC_CENTER, APPROXIMATE,
+        NO_RESULT, or HTTP_ERROR). lat/lon are None when geocoding fails.
+
+    Raises:
+        RuntimeError: If GOOGLE_GEOCODING_API_KEY is not configured.
     """
-    city_lower = city.lower().strip()
+    api_key = GOOGLE_GEOCODING_API_KEY
+    if not api_key:
+        raise RuntimeError(
+            "GOOGLE_GEOCODING_API_KEY is not configured. "
+            "Set it as an environment variable or in .env before running."
+        )
 
-    # Attempt 1: full address. Skip appending city if already present.
-    if city_lower in address.lower():
-        q1 = address
-    else:
-        q1 = f"{address}, {city}"
-    result = _nominatim_query(q1)
-    if result:
-        return result
+    def _call(query: str) -> tuple[float | None, float | None, str | None]:
+        """Single Google Geocoding request. Returns (lat, lon, location_type) or (None, None, level)."""
+        try:
+            resp = requests.get(
+                GOOGLE_GEOCODING_URL,
+                params={"address": query, "key": api_key},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        except Exception as exc:
+            print(f"  [geocode] HTTP error for '{query}': {exc}")
+            return None, None, "HTTP_ERROR"
+        finally:
+            time.sleep(0.05)
 
-    # Attempt 2: first comma-segment (street + number) + city + España
-    first_segment = address.split(",")[0].strip()
-    q2 = f"{first_segment}, {city}, España"
-    result = _nominatim_query(q2)
-    if result:
-        return result
+        status = data.get("status")
+        results = data.get("results", [])
 
-    # Attempt 3: city + España
-    q3 = f"{city}, España"
-    result = _nominatim_query(q3)
-    if result:
-        return result
+        if status == "ZERO_RESULTS" or not results:
+            return None, None, "NO_RESULT"
 
-    return None, None
+        location = results[0]["geometry"]["location"]
+        location_type = results[0]["geometry"].get("location_type", "UNKNOWN")
+        return float(location["lat"]), float(location["lng"]), location_type
+
+    # Attempt 1: full address + city
+    lat, lon, level = _call(f"{address}, {city}, Spain")
+    if lat is not None:
+        return lat, lon, level
+
+    # Attempt 2: city only (fallback when full address yields no result)
+    if level == "NO_RESULT":
+        lat, lon, level = _call(f"{city}, Spain")
+        return lat, lon, level
+
+    return None, None, level
+
+
+# Legacy: Nominatim geocoding, replaced by Google 2026-03-22.
+# def _nominatim_query(q: str) -> tuple[float, float] | None:
+#     """Single Nominatim request. Sleeps 1.1s afterwards (rate limit)."""
+#     try:
+#         response = requests.get(
+#             NOMINATIM_URL,
+#             params={"q": q, "format": "json", "limit": 1, "countrycodes": "es"},
+#             headers={"User-Agent": NOMINATIM_USER_AGENT},
+#             timeout=10,
+#         )
+#         response.raise_for_status()
+#         results = response.json()
+#         if results:
+#             return float(results[0]["lat"]), float(results[0]["lon"])
+#     except Exception as exc:
+#         print(f"  [geocode] Request failed for '{q}': {exc}")
+#     finally:
+#         time.sleep(1.1)
+#     return None
+#
+# def _geocode_nominatim(address: str, city: str) -> tuple[float | None, float | None]:
+#     """Nominatim geocoder with 3-attempt progressive fallback.
+#     Attempt 1: full address
+#     Attempt 2: first segment + city + España
+#     Attempt 3: city + España
+#     """
+#     city_lower = city.lower().strip()
+#     q1 = address if city_lower in address.lower() else f"{address}, {city}"
+#     result = _nominatim_query(q1)
+#     if result:
+#         return result
+#     first_segment = address.split(",")[0].strip()
+#     result = _nominatim_query(f"{first_segment}, {city}, España")
+#     if result:
+#         return result
+#     result = _nominatim_query(f"{city}, España")
+#     if result:
+#         return result
+#     return None, None
 
 
 # ---------------------------------------------------------------------------
@@ -566,7 +612,7 @@ def transform(listings: list[dict]) -> pd.DataFrame:
     Steps:
     - Cast numeric columns (price, area_m2, bedrooms, floor)
     - Extract city from address (last comma-separated segment)
-    - Geocode each listing with Nominatim
+    - Geocode each listing with Google Maps Geocoding API
     - Deduplicate by (property_id, email_id)
 
     Args:
@@ -610,18 +656,20 @@ def transform(listings: list[dict]) -> pd.DataFrame:
     df = df.drop_duplicates(subset=["property_id", "email_id"]).reset_index(drop=True)
 
     # Geocode
-    print(f"Geocoding {len(df)} listings (Nominatim, ~1.1s each)...")
-    lats, lons = [], []
+    print(f"Geocoding {len(df)} listings (Google Maps API, ~0.05s each)...")
+    lats, lons, geocode_levels = [], [], []
     for _, row in df.iterrows():
         if row["address"] and row["city"]:
-            lat, lon = geocode_address(row["address"], row["city"])
+            lat, lon, level = geocode_address(row["address"], row["city"])
         else:
-            lat, lon = None, None
+            lat, lon, level = None, None, None
         lats.append(lat)
         lons.append(lon)
+        geocode_levels.append(level)
 
     df["lat"] = lats
     df["lon"] = lons
+    df["geocode_level"] = geocode_levels
 
     # Enforce column order and types for BigQuery
     df["property_id"] = df["property_id"].astype(str)
@@ -632,7 +680,7 @@ def transform(listings: list[dict]) -> pd.DataFrame:
         "property_id", "operation_type", "property_type", "address", "city",
         "price", "previous_price", "discount_pct", "area_m2", "bedrooms",
         "floor", "is_exterior", "has_elevator", "property_url", "description",
-        "image_url", "lat", "lon", "email_date", "campaign_type", "email_id",
+        "image_url", "lat", "lon", "geocode_level", "email_date", "campaign_type", "email_id",
     ]
     # Only keep columns that exist (defensive)
     columns = [c for c in columns if c in df.columns]

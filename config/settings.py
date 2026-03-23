@@ -85,6 +85,10 @@ INE_RENTA_BASE_URL: str = "https://www.ine.es/jaxiT3/files/t/es/csv_bdsc/{table_
 GOOGLE_PLACES_API_KEY: str = os.getenv("GOOGLE_PLACES_API_KEY", "")
 GOOGLE_PLACES_URL: str = "https://maps.googleapis.com/maps/api/place/nearbysearch/json"
 
+# Google Maps Geocoding API
+GOOGLE_GEOCODING_API_KEY: str = os.getenv("GOOGLE_GEOCODING_API_KEY", "")
+GOOGLE_GEOCODING_URL: str = "https://maps.googleapis.com/maps/api/geocode/json"
+
 # ---------------------------------------------------------------------------
 # OSM POI categories (Overpass amenity / shop tags)
 # ---------------------------------------------------------------------------

@@ -18,6 +18,14 @@ SA_EMAIL="${SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 FUNCTION_NAME="idealista-ingest"
 SCHEDULER_JOB="idealista-ingest-schedule"
 
+# Read GOOGLE_GEOCODING_API_KEY from .env (repo root)
+REPO_ROOT_EARLY="$(cd "$(dirname "$0")/.." && pwd)"
+GOOGLE_GEOCODING_API_KEY=$(grep -E '^GOOGLE_GEOCODING_API_KEY=' "${REPO_ROOT_EARLY}/.env" | cut -d'=' -f2- | sed 's/[[:space:]"'"'"']//g')
+if [[ -z "$GOOGLE_GEOCODING_API_KEY" ]]; then
+    echo "ERROR: GOOGLE_GEOCODING_API_KEY not found in .env — aborting deploy."
+    exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # 1. Create service account (if it doesn't exist)
 # ---------------------------------------------------------------------------
@@ -92,7 +100,7 @@ gcloud functions deploy "$FUNCTION_NAME" \
     --max-instances=1 \
     --min-instances=0 \
     --service-account="$SA_EMAIL" \
-    --set-env-vars="GCP_PROJECT_ID=${PROJECT}" \
+    --set-env-vars="GCP_PROJECT_ID=${PROJECT},GOOGLE_GEOCODING_API_KEY=${GOOGLE_GEOCODING_API_KEY}" \
     --project="$PROJECT"
 
 FUNCTION_URL=$(gcloud functions describe "$FUNCTION_NAME" \
