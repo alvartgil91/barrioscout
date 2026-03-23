@@ -1,22 +1,49 @@
 config {
   type: "table",
   tags: ["phase3"],
-  description: "Listing observations fact table. One row per (property_id × calendar day). Spatial join assigns each observation to a neighbourhood polygon. Listings outside Madrid/Granada polygons get neighborhood_id = NULL."
+  description: "Listing observations fact table. One row per (property_id × calendar day). Spatial join assigns each listing to its neighborhood: first by exact containment (ST_WITHIN), then by nearest neighborhood within 200m as fallback."
 }
 
+WITH exact_match AS (
+  SELECT
+    l.*,
+    n.neighborhood_id,
+    n.city AS neighborhood_city
+  FROM ${ref("stg_idealista_listings")} AS l
+  LEFT JOIN ${ref("dim_neighborhoods")} AS n
+    ON ST_WITHIN(ST_GEOGPOINT(l.lon, l.lat), n.geometry)
+),
+
+nearest_fallback AS (
+  SELECT
+    e.property_id,
+    e.email_date,
+    n.neighborhood_id,
+    n.city AS neighborhood_city
+  FROM exact_match e
+  CROSS JOIN ${ref("dim_neighborhoods")} n
+  WHERE e.neighborhood_id IS NULL
+    AND ST_DWITHIN(ST_GEOGPOINT(e.lon, e.lat), n.geometry, 200)
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY e.property_id, e.email_date
+    ORDER BY ST_DISTANCE(ST_GEOGPOINT(e.lon, e.lat), n.geometry)
+  ) = 1
+)
+
 SELECT
-  l.property_id,
-  n.neighborhood_id,
-  n.city                AS neighborhood_city,
-  l.operation_type,
-  l.price,
-  l.price_per_m2,
-  l.area_m2,
-  l.bedrooms,
-  l.campaign_type,
-  l.property_url,
-  l.email_date,
-  l._loaded_at
-FROM ${ref("stg_idealista_listings")} AS l
-LEFT JOIN ${ref("dim_neighborhoods")}  AS n
-  ON ST_WITHIN(ST_GEOGPOINT(l.lon, l.lat), n.geometry)
+  e.property_id,
+  COALESCE(e.neighborhood_id, f.neighborhood_id)     AS neighborhood_id,
+  COALESCE(e.neighborhood_city, f.neighborhood_city) AS neighborhood_city,
+  e.operation_type,
+  e.price,
+  e.price_per_m2,
+  e.area_m2,
+  e.bedrooms,
+  e.campaign_type,
+  e.property_url,
+  e.email_date,
+  e._loaded_at
+FROM exact_match e
+LEFT JOIN nearest_fallback f
+  ON e.property_id = f.property_id
+  AND e.email_date = f.email_date
