@@ -196,6 +196,33 @@ Este archivo sirve como documentación para el blog y referencia futura.
 
 ---
 
+## Fase 2.8 — Geocoding fixes + Polígonos metropolitanos + Two-pass spatial join (2026-03-23)
+
+### Geocoding fix
+- **Problema**: 4 listings geocodificados fuera del área correcta (ej. Cerceda en Galicia en lugar de Madrid) + 2 Gran Vía en Motril en lugar de Madrid/Granada.
+- **Causa raíz**: Emails sin coma en la dirección → `city` field = dirección completa → Google Maps sin contexto geográfico.
+- **Solución**: Extraer `alert_city` del href "Ver todos los anuncios" del email → `components` bias en Google Maps API → bbox validation con retry.
+- **Fallback**: `geocode_level = "UNVERIFIED"` para coordenadas fuera del bbox de la ciudad. No se pierde ningún listing.
+- **6 listings corregidos manualmente**: 4 bad geocodes Madrid + 2 Gran Vía Motril.
+
+### Polígonos municipales metropolitanos
+- **Decisión**: municipio = barrio (no buscar subdivisiones internas de municipios). Un polígono por municipio.
+- **Fuente**: OSM Overpass API, `admin_level=8` (nivel municipal en España). Script `scripts/download_municipal_polygons.py`.
+- **Cobertura**: 52 municipios (44 primera ronda + 7 segunda ronda + Villa de Otura). Cargados en `barrioscout_raw.neighborhoods` con `code LIKE 'metro_%'`.
+- **Nomenclatura OSM**: Algunos municipios tienen nombre oficial diferente al usado en Idealista (ej. "Otura" en Idealista → "Villa de Otura" en OSM). Descubierto con bbox query.
+- **metro_area como campo derivado**: No se almacena en raw. Se deriva en `dim_neighborhoods` con `ST_Y(ST_CENTROID(geometry)) > 39.0 → 'Madrid', else 'Granada'`. Robusto para cualquier municipio nuevo añadido sin necesidad de mapeado manual.
+- **city = nombre del municipio**: No se fuerza a "Madrid" o "Granada" para no falsear la jerarquía de barrios/distritos de la ciudad.
+- **Walkability metro = 0**: Aceptado como limitación actual. Los municipios metropolitanos tienen `health_count = education_count = shopping_count = transport_count = 0` porque los POIs de OSM solo se ingirieron para los bboxes de las ciudades principales. Pendiente: ingestar POIs para municipios metro.
+
+### Two-pass spatial join (`fct_listing_observations`)
+- **Problema**: ~176 orphan listings cuyos geocodes caían en gaps entre polígonos de barrios (bordes, carreteras).
+- **Solución**: Two-pass join: (1) `ST_WITHIN` exacto, (2) `ST_DWITHIN(200m)` nearest-neighbor para los que no matchean exactamente.
+- **Implementación**: `exact_match` CTE con `LEFT JOIN` + `nearest_fallback` CTE con `CROSS JOIN` filtrado y `QUALIFY ROW_NUMBER()`.
+- **Resultado**: 1,249 → 1,723 assigned (65.1% → 92.9%). 131 orphans restantes corresponden a municipios por debajo del umbral de descarga (1–3 listings) y ~3 gaps estructurales en Granada ciudad.
+- **Scope**: Solo se aplica a `fct_listing_observations`. Los otros spatial joins (`int_neighborhood_buildings`, `int_neighborhood_pois`) mantienen `ST_WITHIN` exacto — correcto porque buildings y POIs están siempre dentro de polígonos.
+
+---
+
 ## Fases planificadas
 
 | Fase | Descripción | Sesiones estimadas |

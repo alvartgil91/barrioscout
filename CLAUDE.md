@@ -151,6 +151,48 @@ Rebuild only the mart (fast, ~40 MiB): `dataform run --actions agg_neighborhood_
 
 ---
 
+## BigQuery — Current State (2026-03-23)
+
+### Raw layer (`barrioscout_raw`)
+| Table | Rows | Notes |
+|-------|------|-------|
+| `neighborhoods` | 249 | 197 original city neighborhoods + 52 OSM metro municipalities |
+| `idealista_listings` | 1,920 | 6 listings re-geocoded (4 bad geocodes Madrid + 2 Gran Vía Motril) |
+
+### Analytics layer (`barrioscout_analytics`)
+| Table | Rows | Notes |
+|-------|------|-------|
+| `dim_neighborhoods` | 217 | 166 city neighborhoods + 51 metro municipalities (after dedup) |
+| `fct_listing_observations` | 1,854 | 1,723 assigned (92.9%) / 131 orphans |
+
+### Neighborhood assignment coverage
+| State | Assigned | % |
+|-------|----------|---|
+| Before (pre-session) | 1,249 | 65.1% |
+| After (current) | 1,723 | 92.9% |
+
+Remaining 131 orphans: municipalities with 1–3 listings (below download threshold) + ~3 polygon gaps in Granada city.
+
+### Geocoding
+- Cloud Function updated: `alert_city` extracted from email, Google Maps API `components` bias, bbox validation with retry
+- 6 listings manually corrected (4 bad geocodes Madrid + 2 Gran Vía Motril)
+- `geocode_level = "UNVERIFIED"` safety net for coordinates outside city bbox
+
+### Pipeline changes (this session)
+- `fct_listing_observations`: two-pass spatial join (ST_WITHIN exact + ST_DWITHIN 200m fallback)
+- 52 municipal polygons from OSM `admin_level=8` loaded to `barrioscout_raw.neighborhoods`
+- `metro_area` added to `dim_neighborhoods` (derived from polygon centroid: lat > 39.0 → Madrid, else Granada) and propagated to `fct_listing_observations`
+- Script: `scripts/download_municipal_polygons.py` (resume-capable, incremental JSON save)
+
+### Pending items
+1. ~~Polígonos de municipios del área metropolitana~~ ✅ RESUELTO
+2. Deploy Streamlit to Community Cloud
+3. pandas-gbq warning in Cloud Function
+4. Ingest OSM POIs for metro municipalities (walkability = 0 currently)
+5. Possible: neighborhood polygons for large municipalities (Alcalá 28 listings, Las Gabias 30)
+
+---
+
 ## Phase Status
 
 | Phase | Description | Status |
@@ -158,6 +200,7 @@ Rebuild only the mart (fast, ~40 MiB): `dataform run --actions agg_neighborhood_
 | 1 | Raw ingestion scripts (Idealista, OSM, Catastro, INE, Ministerio) | ✅ Complete |
 | 2 | Neighborhood + district polygons (Madrid + Granada) | ✅ Complete |
 | 2.7 | Pre-scoring fixes (mojibake, bus_stop POIs) | ✅ Complete |
+| 2.8 | Geocoding fixes + metro polygons + spatial join improvement | ✅ Complete |
 | 3 | Scoring engine (Dataform, `agg_neighborhood_scores`) | ✅ Complete |
 | 4 | Streamlit dashboard | ⬜ Next |
 
