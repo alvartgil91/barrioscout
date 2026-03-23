@@ -22,7 +22,7 @@ RETRY_BACKOFF = [10, 30, 60, 120]  # seconds to wait between retries
 MUNICIPALITIES: dict[str, list[str]] = {
     "Granada": [
         "Las Gabias", "Churriana de la Vega", "Atarfe", "Armilla",
-        "Ogíjares", "Otura", "La Zubia", "Peligros", "Monachil",
+        "Ogíjares", "Villa de Otura", "La Zubia", "Peligros", "Monachil",
         "Alhendín", "Vegas del Genil",
         # Round 2: remaining orphans with 4+ listings
         "Cenes de la Vega",
