@@ -85,22 +85,33 @@ def get_gmail_service(creds: Credentials | None = None) -> Resource:
 # ---------------------------------------------------------------------------
 
 
-def geocode_address(address: str, city: str) -> tuple[float | None, float | None, str | None]:
+def geocode_address(
+    address: str,
+    city: str,
+    alert_city: str | None = None,
+) -> tuple[float | None, float | None, str | None]:
     """Geocode a Spanish property address using Google Maps Geocoding API.
 
-    Attempt 1: {address}, {city}, Spain  (full address)
-    Attempt 2: {city}, Spain             (only if attempt 1 gives ZERO_RESULTS)
+    Attempt 1: {address}, {city}, Spain  (full address, with components bias)
+    Attempt 2: {city}, {alert_city}, Spain  (bbox miss retry, only when alert_city known)
+    Attempt 3: {city}, Spain  (only if attempt 1 gives ZERO_RESULTS)
+
+    When alert_city is provided, a ``components=country:ES|administrative_area:{alert_city}``
+    parameter is added as a geographic bias (soft constraint — Google may still return results
+    outside it, which is caught by post-geocode bbox validation).
 
     Rate limit: 0.05s sleep after every request (~20 QPS).
 
     Args:
         address: Street address (e.g. "Calle de Alcántara, Goya, Madrid").
-        city: City name for disambiguation (e.g. "Madrid").
+        city: City name inferred from the address (last comma segment).
+        alert_city: City extracted from the Idealista alert link ("Madrid" or "Granada").
+                    Used as geocoding bias and for bbox validation.
 
     Returns:
         (lat, lon, geocode_level) — geocode_level is the Google location_type
         string (ROOFTOP, RANGE_INTERPOLATED, GEOMETRIC_CENTER, APPROXIMATE,
-        NO_RESULT, or HTTP_ERROR). lat/lon are None when geocoding fails.
+        NO_RESULT, HTTP_ERROR, or UNVERIFIED). lat/lon are None when geocoding fails.
 
     Raises:
         RuntimeError: If GOOGLE_GEOCODING_API_KEY is not configured.
@@ -114,12 +125,11 @@ def geocode_address(address: str, city: str) -> tuple[float | None, float | None
 
     def _call(query: str) -> tuple[float | None, float | None, str | None]:
         """Single Google Geocoding request. Returns (lat, lon, location_type) or (None, None, level)."""
+        params: dict = {"address": query, "key": api_key}
+        if alert_city:
+            params["components"] = f"country:ES|administrative_area:{alert_city}"
         try:
-            resp = requests.get(
-                GOOGLE_GEOCODING_URL,
-                params={"address": query, "key": api_key},
-                timeout=10,
-            )
+            resp = requests.get(GOOGLE_GEOCODING_URL, params=params, timeout=10)
             resp.raise_for_status()
             data = resp.json()
         except Exception as exc:
@@ -141,9 +151,17 @@ def geocode_address(address: str, city: str) -> tuple[float | None, float | None
     # Attempt 1: full address + city
     lat, lon, level = _call(f"{address}, {city}, Spain")
     if lat is not None:
+        # Bbox validation: if result is outside the expected metro area, retry
+        if alert_city and not _in_bbox(lat, lon, alert_city):
+            print(f"  [geocode] bbox miss ({lat:.4f},{lon:.4f}) for '{address}' — retrying")
+            lat2, lon2, level2 = _call(f"{city}, {alert_city}, Spain")
+            if lat2 is not None and _in_bbox(lat2, lon2, alert_city):
+                return lat2, lon2, level2
+            # Both attempts outside bbox — keep original coords, flag for review
+            return lat, lon, "UNVERIFIED"
         return lat, lon, level
 
-    # Attempt 2: city only (fallback when full address yields no result)
+    # Attempt 3: city only (fallback when full address yields no result)
     if level == "NO_RESULT":
         lat, lon, level = _call(f"{city}, Spain")
         return lat, lon, level
@@ -190,6 +208,24 @@ def geocode_address(address: str, city: str) -> tuple[float | None, float | None
 #     if result:
 #         return result
 #     return None, None
+
+
+# ---------------------------------------------------------------------------
+# Geocoding helpers — bounding boxes for post-geocode validation
+# ---------------------------------------------------------------------------
+
+_BBOX: dict[str, dict[str, tuple[float, float]]] = {
+    "Madrid":  {"lat": (39.8, 41.2), "lon": (-4.5, -3.0)},
+    "Granada": {"lat": (36.5, 37.5), "lon": (-4.2, -3.2)},
+}
+
+
+def _in_bbox(lat: float, lon: float, alert_city: str) -> bool:
+    """Return True if (lat, lon) falls within the metro bounding box for alert_city."""
+    bbox = _BBOX.get(alert_city)
+    if not bbox:
+        return True  # unknown city — don't filter
+    return bbox["lat"][0] <= lat <= bbox["lat"][1] and bbox["lon"][0] <= lon <= bbox["lon"][1]
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +349,30 @@ def _find_title_fallback(soup: BeautifulSoup) -> str | None:
     return None
 
 
+def _extract_alert_city(soup: BeautifulSoup) -> str | None:
+    """Extract the alert city (Madrid or Granada) from the 'Ver todos' link href.
+
+    The search-results link has the pattern:
+      idealista.com/{venta|alquiler}-viviendas/{zone}/...
+    where {zone} starts with "madrid" (e.g. "madrid-provincia") or "granada"
+    (e.g. "granada", "granada-granada", "area-de-granada" — but the segment
+    before the first "/" always starts with the city name or "area-de-granada").
+
+    Returns "Madrid", "Granada", or None (fvp emails have no such link).
+    """
+    for a_tag in soup.find_all("a", href=True):
+        href = a_tag["href"]
+        m = re.search(r"idealista\.com/(?:venta|alquiler)-viviendas/([^/?]+)", href)
+        if not m:
+            continue
+        zone = m.group(1).lower()
+        if zone.startswith("madrid"):
+            return "Madrid"
+        if "granada" in zone:
+            return "Granada"
+    return None
+
+
 def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
     """Parse all property listings from an Idealista email.
 
@@ -327,6 +387,9 @@ def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
     Returns:
         List of listing dicts (one per property found in the email).
     """
+    # Extract alert city from the search-results link (email-level field)
+    alert_city = _extract_alert_city(soup)
+
     # Collect all property anchors (deduped by property_id)
     anchors: list[tuple[str, str | None, str | None, str | None]] = []
     seen_ids: set[str] = set()
@@ -479,6 +542,7 @@ def parse_listings_from_email(soup: BeautifulSoup) -> list[dict]:
                 "property_url": property_url,
                 "description": description,
                 "image_url": image_url,
+                "alert_city": alert_city,
             }
         )
 
@@ -660,7 +724,11 @@ def transform(listings: list[dict]) -> pd.DataFrame:
     lats, lons, geocode_levels = [], [], []
     for _, row in df.iterrows():
         if row["address"] and row["city"]:
-            lat, lon, level = geocode_address(row["address"], row["city"])
+            lat, lon, level = geocode_address(
+                row["address"],
+                row["city"],
+                alert_city=row.get("alert_city"),
+            )
         else:
             lat, lon, level = None, None, None
         lats.append(lat)
@@ -678,7 +746,7 @@ def transform(listings: list[dict]) -> pd.DataFrame:
 
     columns = [
         "property_id", "operation_type", "property_type", "address", "city",
-        "price", "previous_price", "discount_pct", "area_m2", "bedrooms",
+        "alert_city", "price", "previous_price", "discount_pct", "area_m2", "bedrooms",
         "floor", "is_exterior", "has_elevator", "property_url", "description",
         "image_url", "lat", "lon", "geocode_level", "email_date", "campaign_type", "email_id",
     ]
