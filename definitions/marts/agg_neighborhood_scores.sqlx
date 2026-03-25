@@ -1,7 +1,7 @@
 config {
   type: "table",
   tags: ["phase3"],
-  description: "Neighborhood score card. Joins dim_neighborhoods + int_neighborhood_pois + int_neighborhood_buildings + int_neighborhood_listings. Computes PERCENT_RANK()-based 0–100 sub-scores within city. Composite score redistributes weight proportionally among non-NULL sub-scores."
+  description: "Neighborhood score card. Joins dim_neighborhoods + int_neighborhood_pois + int_neighborhood_buildings + int_neighborhood_listings. Computes PERCENT_RANK()-based 0–100 sub-scores within metro_area (so metro municipalities rank alongside city neighborhoods). Composite score redistributes weight proportionally among non-NULL sub-scores."
 }
 
 WITH dim AS (
@@ -9,6 +9,7 @@ WITH dim AS (
     neighborhood_id,
     neighborhood_name,
     city,
+    metro_area,
     district_id,
     district_name,
     area_km2
@@ -28,13 +29,16 @@ listings AS (
 ),
 
 -- ─────────────────────────────────────────────
--- PERCENTILE RANKS  (all within-city, NULLS LAST)
+-- PERCENTILE RANKS  (all within metro_area, NULLS LAST)
+-- Using metro_area instead of city so metro municipalities
+-- rank alongside the city neighborhoods they belong to.
 -- ─────────────────────────────────────────────
 ranked AS (
   SELECT
     d.neighborhood_id,
     d.neighborhood_name,
     d.city,
+    d.metro_area,
     d.district_id,
     d.district_name,
     d.area_km2,
@@ -64,45 +68,45 @@ ranked AS (
     -- ── walkability components ────────────────
     -- Higher POI density per km² = better walkability
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY COALESCE(p.health_count,    0) ASC  NULLS LAST
+      PARTITION BY d.metro_area ORDER BY COALESCE(p.health_count,    0) ASC  NULLS LAST
     ) AS health_prank,
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY COALESCE(p.education_count, 0) ASC  NULLS LAST
+      PARTITION BY d.metro_area ORDER BY COALESCE(p.education_count, 0) ASC  NULLS LAST
     ) AS education_prank,
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY COALESCE(p.shopping_count,  0) ASC  NULLS LAST
+      PARTITION BY d.metro_area ORDER BY COALESCE(p.shopping_count,  0) ASC  NULLS LAST
     ) AS shopping_prank,
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY COALESCE(p.transport_count, 0) ASC  NULLS LAST
+      PARTITION BY d.metro_area ORDER BY COALESCE(p.transport_count, 0) ASC  NULLS LAST
     ) AS transport_prank,
 
     -- ── building quality ──────────────────────
     -- Higher pct_post_2000 = newer stock = better
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY b.pct_post_2000 ASC NULLS LAST
+      PARTITION BY d.metro_area ORDER BY b.pct_post_2000 ASC NULLS LAST
     ) AS building_quality_prank,
 
     -- ── price (affordability) ─────────────────
     -- Lower sale price/m² = more affordable = higher score (inverted rank)
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY l.median_sale_price_m2 DESC NULLS LAST
+      PARTITION BY d.metro_area ORDER BY l.median_sale_price_m2 DESC NULLS LAST
     ) AS price_prank,
 
     -- ── yield ────────────────────────────────
     -- Higher gross rental yield = better investment
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY l.gross_rental_yield_pct ASC NULLS LAST
+      PARTITION BY d.metro_area ORDER BY l.gross_rental_yield_pct ASC NULLS LAST
     ) AS yield_prank,
 
     -- ── market dynamics components ────────────
     -- Higher listings density (supply) = more liquid market
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY
+      PARTITION BY d.metro_area ORDER BY
         SAFE_DIVIDE(COALESCE(l.total_listings, 0), d.area_km2) ASC NULLS LAST
     ) AS supply_density_prank,
     -- Higher pricedrop ratio = more motivated sellers = interesting signal
     PERCENT_RANK() OVER (
-      PARTITION BY d.city ORDER BY l.pricedrop_ratio ASC NULLS LAST
+      PARTITION BY d.metro_area ORDER BY l.pricedrop_ratio ASC NULLS LAST
     ) AS pricedrop_prank
 
   FROM dim AS d
@@ -119,12 +123,12 @@ scores AS (
   SELECT
     *,
 
-    -- walkability_score: mean of 4 POI category percentile scores
+    -- services_score: mean of 4 POI category percentile scores
     -- POIs always available (COALESCE to 0 upstream), so never NULL
     ROUND(
       (health_prank + education_prank + shopping_prank + transport_prank) / 4.0 * 100,
       1
-    ) AS walkability_score,
+    ) AS services_score,
 
     -- building_quality_score: NULL when no Catastro data for neighborhood.
     -- IMPORTANT: must check pct_post_2000 IS NOT NULL, not building_quality_prank IS NOT NULL.
@@ -186,6 +190,7 @@ SELECT
   neighborhood_id,
   neighborhood_name,
   city,
+  metro_area,
   district_id,
   district_name,
   area_km2,
@@ -213,7 +218,7 @@ SELECT
   ROUND(gross_rental_yield_pct, 2)         AS gross_rental_yield_pct,
 
   -- ── sub-scores ───────────────────────────────────────────────────────────
-  walkability_score,
+  services_score,
   building_quality_score,
   price_score,
   yield_score,
@@ -223,7 +228,7 @@ SELECT
   -- Weighted average; NULL sub-scores excluded and their weight redistributed
   ROUND(
     SAFE_DIVIDE(
-      (walkability_score       * nom_w_walkability * w_walkability_flag)
+      (services_score          * nom_w_walkability * w_walkability_flag)
     + (COALESCE(building_quality_score, 0) * nom_w_building  * w_building_flag)
     + (COALESCE(price_score,            0) * nom_w_price     * w_price_flag)
     + (COALESCE(yield_score,            0) * nom_w_yield     * w_yield_flag)

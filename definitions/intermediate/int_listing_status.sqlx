@@ -1,0 +1,26 @@
+config {
+  type: "table",
+  tags: ["phase4"],
+  description: "Current listing status derived from check history. One row per property_id: latest check result, last_checked_at, and inactive_since (first time an INACTIVE check was recorded)."
+}
+
+WITH checks AS (
+  SELECT * FROM ${ref("listing_status_checks")}
+),
+
+ranked AS (
+  SELECT
+    *,
+    ROW_NUMBER() OVER (PARTITION BY property_id ORDER BY checked_at DESC) AS rn
+  FROM checks
+)
+
+SELECT
+  property_id,
+  MAX(IF(rn = 1, listing_status,    NULL)) AS current_status,
+  MAX(IF(rn = 1, checked_at,        NULL)) AS last_checked_at,
+  MAX(IF(rn = 1, checked_method,    NULL)) AS last_checked_method,
+  COUNT(*)                                  AS check_count,
+  MIN(IF(listing_status = 'INACTIVE', checked_at, NULL)) AS inactive_since
+FROM ranked
+GROUP BY property_id
