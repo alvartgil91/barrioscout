@@ -33,14 +33,17 @@ SELECT
   geometry,
   -- Area in km2 (ST_AREA returns m2)
   SAFE_DIVIDE(ST_AREA(geometry), 1000000) AS area_km2,
-  -- Zone type: metro municipalities vs capital neighborhoods
+  -- Zone type: metro subdivisions vs metro municipalities vs capital neighborhoods
+  -- REGEXP required because LIKE 'metro_%_d__' false-positives on codes
+  -- containing 'd' in the slug (e.g. metro_alhendin matches _d__ via greedy %)
   CASE
+    WHEN REGEXP_CONTAINS(code, r'^metro_.*_d[0-9]{2}$') THEN 'metro_neighborhood'
     WHEN code LIKE 'metro_%' THEN 'metro_municipality'
     ELSE 'capital_neighborhood'
   END AS zone_type,
-  -- Parent municipality for future subdivision grouping
+  -- Parent municipality for subdivision grouping (city = municipality for both metro types)
   CASE
-    WHEN code LIKE 'metro_%' THEN area_name
+    WHEN code LIKE 'metro_%' THEN city
     ELSE NULL
   END AS parent_municipality,
   _loaded_at
