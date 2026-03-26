@@ -134,25 +134,34 @@ def main() -> None:
         deleted = result.num_dml_affected_rows or 0
         total_deleted += deleted
 
-        # Insert new district records via streaming insert
-        rows = [
-            {
-                "city": rec["city"],
-                "level": rec["level"],
-                "name": rec["name"],
-                "code": rec["code"],
-                "district_name": rec["district_name"],
-                "geometry_wkt": rec["geometry_wkt"],
-            }
-            for rec in records
-        ]
+        # Insert new district records via DML (avoids streaming buffer issues)
+        values_clauses = []
+        params = []
+        for i, rec in enumerate(records):
+            p_city = f"city_{i}"
+            p_name = f"name_{i}"
+            p_code = f"code_{i}"
+            p_dist = f"dist_{i}"
+            p_wkt = f"wkt_{i}"
+            values_clauses.append(
+                f"(@{p_city}, 'neighborhood', @{p_name}, @{p_code}, @{p_dist}, @{p_wkt})"
+            )
+            params.extend([
+                bigquery.ScalarQueryParameter(p_city, "STRING", rec["city"]),
+                bigquery.ScalarQueryParameter(p_name, "STRING", rec["name"]),
+                bigquery.ScalarQueryParameter(p_code, "STRING", rec["code"]),
+                bigquery.ScalarQueryParameter(p_dist, "STRING", rec["district_name"]),
+                bigquery.ScalarQueryParameter(p_wkt, "STRING", rec["geometry_wkt"]),
+            ])
 
-        errors = client.insert_rows_json(TABLE, rows)
-        if errors:
-            print(f"  ERROR {city}: {errors[:200]}")
-        else:
-            total_inserted += len(records)
-            print(f"  {city:<30} deleted={deleted}, inserted={len(records)}")
+        insert_query = (
+            f"INSERT INTO `{TABLE}` (city, level, name, code, district_name, geometry_wkt) "
+            f"VALUES {', '.join(values_clauses)}"
+        )
+        insert_config = bigquery.QueryJobConfig(query_parameters=params)
+        client.query(insert_query, job_config=insert_config).result()
+        total_inserted += len(records)
+        print(f"  {city:<30} deleted={deleted}, inserted={len(records)}")
 
     print(f"\nTotal: deleted {total_deleted}, inserted {total_inserted}")
 
