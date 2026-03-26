@@ -1,7 +1,7 @@
 config {
   type: "table",
   tags: ["phase3"],
-  description: "Neighborhood score card. Joins dim_neighborhoods + int_neighborhood_pois + int_neighborhood_buildings + int_neighborhood_listings. Computes PERCENT_RANK()-based 0–100 sub-scores within metro_area (so metro municipalities rank alongside city neighborhoods). Composite score redistributes weight proportionally among non-NULL sub-scores."
+  description: "Neighborhood score card. Joins dim_neighborhoods + int_neighborhood_pois + int_neighborhood_buildings + int_neighborhood_listings. Computes PERCENT_RANK()-based 0–100 sub-scores within city (each capital city and metro municipality is its own ranking universe). Composite score redistributes weight proportionally among non-NULL sub-scores."
 }
 
 WITH dim AS (
@@ -12,7 +12,9 @@ WITH dim AS (
     metro_area,
     district_id,
     district_name,
-    area_km2
+    area_km2,
+    zone_type,
+    parent_municipality
   FROM ${ref("dim_neighborhoods")}
 ),
 
@@ -29,9 +31,10 @@ listings AS (
 ),
 
 -- ─────────────────────────────────────────────
--- PERCENTILE RANKS  (all within metro_area, NULLS LAST)
--- Using metro_area instead of city so metro municipalities
--- rank alongside the city neighborhoods they belong to.
+-- PERCENTILE RANKS  (all within city, NULLS LAST)
+-- Each city/municipality is its own ranking universe.
+-- Capital neighborhoods rank within "Madrid"/"Granada".
+-- Metro municipalities rank within themselves (1 zone = PERCENT_RANK 0).
 -- ─────────────────────────────────────────────
 ranked AS (
   SELECT
@@ -42,6 +45,8 @@ ranked AS (
     d.district_id,
     d.district_name,
     d.area_km2,
+    d.zone_type,
+    d.parent_municipality,
 
     -- ── raw metrics ──────────────────────────
     p.health_count,
@@ -68,45 +73,45 @@ ranked AS (
     -- ── walkability components ────────────────
     -- Higher POI density per km² = better walkability
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY COALESCE(p.health_count,    0) ASC  NULLS LAST
+      PARTITION BY d.city ORDER BY COALESCE(p.health_count,    0) ASC  NULLS LAST
     ) AS health_prank,
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY COALESCE(p.education_count, 0) ASC  NULLS LAST
+      PARTITION BY d.city ORDER BY COALESCE(p.education_count, 0) ASC  NULLS LAST
     ) AS education_prank,
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY COALESCE(p.shopping_count,  0) ASC  NULLS LAST
+      PARTITION BY d.city ORDER BY COALESCE(p.shopping_count,  0) ASC  NULLS LAST
     ) AS shopping_prank,
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY COALESCE(p.transport_count, 0) ASC  NULLS LAST
+      PARTITION BY d.city ORDER BY COALESCE(p.transport_count, 0) ASC  NULLS LAST
     ) AS transport_prank,
 
     -- ── building quality ──────────────────────
     -- Higher pct_post_2000 = newer stock = better
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY b.pct_post_2000 ASC NULLS LAST
+      PARTITION BY d.city ORDER BY b.pct_post_2000 ASC NULLS LAST
     ) AS building_quality_prank,
 
     -- ── price (affordability) ─────────────────
     -- Lower sale price/m² = more affordable = higher score (inverted rank)
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY l.median_sale_price_m2 DESC NULLS LAST
+      PARTITION BY d.city ORDER BY l.median_sale_price_m2 DESC NULLS LAST
     ) AS price_prank,
 
     -- ── yield ────────────────────────────────
     -- Higher gross rental yield = better investment
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY l.gross_rental_yield_pct ASC NULLS LAST
+      PARTITION BY d.city ORDER BY l.gross_rental_yield_pct ASC NULLS LAST
     ) AS yield_prank,
 
     -- ── market dynamics components ────────────
     -- Higher listings density (supply) = more liquid market
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY
+      PARTITION BY d.city ORDER BY
         SAFE_DIVIDE(COALESCE(l.total_listings, 0), d.area_km2) ASC NULLS LAST
     ) AS supply_density_prank,
     -- Higher pricedrop ratio = more motivated sellers = interesting signal
     PERCENT_RANK() OVER (
-      PARTITION BY d.metro_area ORDER BY l.pricedrop_ratio ASC NULLS LAST
+      PARTITION BY d.city ORDER BY l.pricedrop_ratio ASC NULLS LAST
     ) AS pricedrop_prank
 
   FROM dim AS d
@@ -194,6 +199,8 @@ SELECT
   district_id,
   district_name,
   area_km2,
+  zone_type,
+  parent_municipality,
 
   -- ── raw metrics ──────────────────────────────────────────────────────────
   health_count,

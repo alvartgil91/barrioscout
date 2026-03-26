@@ -33,5 +33,15 @@ SELECT
   geometry,
   -- Area in km2 (ST_AREA returns m2)
   SAFE_DIVIDE(ST_AREA(geometry), 1000000) AS area_km2,
+  -- Zone type: metro municipalities vs capital neighborhoods
+  CASE
+    WHEN code LIKE 'metro_%' THEN 'metro_municipality'
+    ELSE 'capital_neighborhood'
+  END AS zone_type,
+  -- Parent municipality for future subdivision grouping
+  CASE
+    WHEN code LIKE 'metro_%' THEN area_name
+    ELSE NULL
+  END AS parent_municipality,
   _loaded_at
 FROM cleaned
