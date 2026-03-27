@@ -45,9 +45,9 @@ import streamlit as st
 from google.cloud import bigquery
 from google.oauth2 import service_account
 
-GCP_PROJECT = "portfolio-alvartgil91"
+GCP_PROJECT  = "portfolio-alvartgil91"
+DATASET_RAW      = f"{GCP_PROJECT}.barrioscout_raw"
 DATASET_ANALYTICS = f"{GCP_PROJECT}.barrioscout_analytics"
-DATASET_STAGING   = f"{GCP_PROJECT}.barrioscout_staging"
 
 
 def _get_bq_client() -> bigquery.Client:
@@ -94,11 +94,9 @@ def load_neighborhood_scores(metro_area: str) -> pd.DataFrame:
     Returns:
         DataFrame with one row per neighborhood.
     """
-    # zone_type and parent_municipality are sourced from stg_neighborhoods, a
-    # Dataform VIEW (barrioscout_staging) that is always current — it derives
-    # these fields from barrioscout_raw.neighborhoods on every query execution.
-    # The materialized tables (dim_neighborhoods, agg_neighborhood_scores) may
-    # not yet have these columns if the Dataform pipeline has not been re-run.
+    # zone_type and parent_municipality are derived by joining barrioscout_raw.neighborhoods
+    # (the always-current raw table) and applying the same CASE logic as stg_neighborhoods.
+    # This avoids depending on Dataform-managed objects (views or tables) being up-to-date.
     query = f"""
         SELECT
             s.neighborhood_id,
@@ -135,12 +133,20 @@ def load_neighborhood_scores(metro_area: str) -> pd.DataFrame:
             s.data_completeness,
             s.available_sub_scores,
             s.scored_at,
-            sn.zone_type,
-            sn.parent_municipality
+            CASE
+                WHEN n.code NOT LIKE 'metro_%'                          THEN 'capital_neighborhood'
+                WHEN n.district_name IS NOT NULL
+                     AND n.district_name != n.name                      THEN 'metro_neighborhood'
+                ELSE                                                         'metro_municipality'
+            END AS zone_type,
+            CASE
+                WHEN n.code LIKE 'metro_%' THEN INITCAP(n.city)
+                ELSE NULL
+            END AS parent_municipality
         FROM `{DATASET_ANALYTICS}.agg_neighborhood_scores` AS s
-        LEFT JOIN `{DATASET_STAGING}.stg_neighborhoods` AS sn
-            ON sn.area_id = s.neighborhood_id
-            AND sn.level = 'neighborhood'
+        LEFT JOIN `{DATASET_RAW}.neighborhoods` AS n
+            ON  LOWER(n.city || '_' || REPLACE(LOWER(n.name), ' ', '_')) = s.neighborhood_id
+            AND n.level = 'neighborhood'
         WHERE LOWER(s.metro_area) = LOWER(@metro_area)
         ORDER BY s.composite_score DESC NULLS LAST
     """
