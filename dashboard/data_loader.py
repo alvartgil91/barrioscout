@@ -93,47 +93,52 @@ def load_neighborhood_scores(metro_area: str) -> pd.DataFrame:
     Returns:
         DataFrame with one row per neighborhood.
     """
+    # zone_type and parent_municipality come from dim_neighborhoods via JOIN.
+    # agg_neighborhood_scores may not have these columns if the Dataform pipeline
+    # has not been re-run after the model was last updated.
     query = f"""
         SELECT
-            neighborhood_id,
-            neighborhood_name,
-            city,
-            metro_area,
-            district_id,
-            district_name,
-            area_km2,
-            health_count,
-            education_count,
-            shopping_count,
-            transport_count,
-            total_pois,
-            pois_per_km2,
-            residential_buildings,
-            avg_year_built,
-            median_year_built,
-            pct_post_2000,
-            pct_pre_1960,
-            sale_count,
-            rent_count,
-            total_listings,
-            pricedrop_ratio,
-            median_sale_price_m2,
-            median_rent_price_m2,
-            gross_rental_yield_pct,
-            services_score,
-            building_quality_score,
-            price_score,
-            yield_score,
-            market_dynamics_score,
-            composite_score,
-            data_completeness,
-            available_sub_scores,
-            scored_at,
-            zone_type,
-            parent_municipality
-        FROM `{DATASET_ANALYTICS}.agg_neighborhood_scores`
-        WHERE LOWER(metro_area) = LOWER(@metro_area)
-        ORDER BY composite_score DESC NULLS LAST
+            s.neighborhood_id,
+            s.neighborhood_name,
+            s.city,
+            s.metro_area,
+            s.district_id,
+            s.district_name,
+            s.area_km2,
+            s.health_count,
+            s.education_count,
+            s.shopping_count,
+            s.transport_count,
+            s.total_pois,
+            s.pois_per_km2,
+            s.residential_buildings,
+            s.avg_year_built,
+            s.median_year_built,
+            s.pct_post_2000,
+            s.pct_pre_1960,
+            s.sale_count,
+            s.rent_count,
+            s.total_listings,
+            s.pricedrop_ratio,
+            s.median_sale_price_m2,
+            s.median_rent_price_m2,
+            s.gross_rental_yield_pct,
+            s.services_score,
+            s.building_quality_score,
+            s.price_score,
+            s.yield_score,
+            s.market_dynamics_score,
+            s.composite_score,
+            s.data_completeness,
+            s.available_sub_scores,
+            s.scored_at,
+            d.zone_type,
+            d.parent_municipality
+        FROM `{DATASET_ANALYTICS}.agg_neighborhood_scores` AS s
+        LEFT JOIN `{DATASET_ANALYTICS}.dim_neighborhoods` AS d
+            USING (neighborhood_id)
+        WHERE LOWER(s.metro_area) = LOWER(@metro_area)
+        ORDER BY s.composite_score DESC NULLS LAST
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[bigquery.ScalarQueryParameter("metro_area", "STRING", metro_area)]
