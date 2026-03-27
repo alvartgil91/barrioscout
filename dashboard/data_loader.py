@@ -47,6 +47,7 @@ from google.oauth2 import service_account
 
 GCP_PROJECT = "portfolio-alvartgil91"
 DATASET_ANALYTICS = f"{GCP_PROJECT}.barrioscout_analytics"
+DATASET_STAGING   = f"{GCP_PROJECT}.barrioscout_staging"
 
 
 def _get_bq_client() -> bigquery.Client:
@@ -93,9 +94,11 @@ def load_neighborhood_scores(metro_area: str) -> pd.DataFrame:
     Returns:
         DataFrame with one row per neighborhood.
     """
-    # zone_type and parent_municipality come from dim_neighborhoods via JOIN.
-    # agg_neighborhood_scores may not have these columns if the Dataform pipeline
-    # has not been re-run after the model was last updated.
+    # zone_type and parent_municipality are sourced from stg_neighborhoods, a
+    # Dataform VIEW (barrioscout_staging) that is always current — it derives
+    # these fields from barrioscout_raw.neighborhoods on every query execution.
+    # The materialized tables (dim_neighborhoods, agg_neighborhood_scores) may
+    # not yet have these columns if the Dataform pipeline has not been re-run.
     query = f"""
         SELECT
             s.neighborhood_id,
@@ -132,11 +135,12 @@ def load_neighborhood_scores(metro_area: str) -> pd.DataFrame:
             s.data_completeness,
             s.available_sub_scores,
             s.scored_at,
-            d.zone_type,
-            d.parent_municipality
+            sn.zone_type,
+            sn.parent_municipality
         FROM `{DATASET_ANALYTICS}.agg_neighborhood_scores` AS s
-        LEFT JOIN `{DATASET_ANALYTICS}.dim_neighborhoods` AS d
-            USING (neighborhood_id)
+        LEFT JOIN `{DATASET_STAGING}.stg_neighborhoods` AS sn
+            ON sn.area_id = s.neighborhood_id
+            AND sn.level = 'neighborhood'
         WHERE LOWER(s.metro_area) = LOWER(@metro_area)
         ORDER BY s.composite_score DESC NULLS LAST
     """
