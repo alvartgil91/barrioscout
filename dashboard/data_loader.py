@@ -251,7 +251,8 @@ def load_listings(neighborhood_id: Optional[str] = None) -> pd.DataFrame:
             last_seen_at,
             times_seen,
             has_price_drop,
-            days_on_market
+            days_on_market,
+            current_status
         FROM `{DATASET_ANALYTICS}.int_listings_latest`
         {where_clause}
         ORDER BY last_seen_at DESC

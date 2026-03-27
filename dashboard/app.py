@@ -802,7 +802,7 @@ with detail_col:
                 st.info("No score data available for this neighbourhood.")
                 render_default(filtered_scores_df)
             else:
-                render_detail(match_rows.iloc[0], active_city)
+                render_detail(match_rows.iloc[0], active_city, scores_df)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
 _n_nb   = len(filtered_scores_df)

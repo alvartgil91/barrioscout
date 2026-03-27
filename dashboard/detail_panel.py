@@ -1,13 +1,14 @@
 """Right-panel detail view for BarrioScout.
 
 Exports two public functions:
-  render_default(scores_df)            — shown when nothing is selected
-  render_detail(row, active_city)      — shown when a neighborhood is selected
+  render_default(scores_df)                       — shown when nothing is selected
+  render_detail(row, active_city, scores_df)      — shown when a zone is selected
 """
 
 from __future__ import annotations
 
 import html as html_module
+from typing import Optional
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -16,9 +17,56 @@ import streamlit as st
 from data_loader import load_listings
 
 
+# ── Zone type badge ───────────────────────────────────────────────────────────
+
+def _zone_badge(zone_type: Optional[str]) -> str:
+    """Return an inline HTML badge for the zone type."""
+    cfg: dict[str, tuple[str, str, str]] = {
+        "capital_neighborhood": ("Barrio",     "#1a9850", "#e8f5e9"),
+        "metro_neighborhood":   ("Zona metro", "#1565c0", "#e3f2fd"),
+        "metro_municipality":   ("Municipio",  "#616161", "#f5f5f5"),
+    }
+    label, fg, bg = cfg.get(zone_type or "", ("", "#333", "#eee"))
+    if not label:
+        return ""
+    return (
+        f'<span style="background:{bg};color:{fg};padding:2px 8px;'
+        f'border-radius:4px;font-size:12px;font-weight:500">{label}</span>'
+    )
+
+
+# ── Ranking ───────────────────────────────────────────────────────────────────
+
+def _get_rank(row: pd.Series, scores_df: pd.DataFrame) -> Optional[tuple[int, int]]:
+    """Return (rank, total) for the zone within its city, or None if not rankable.
+
+    metro_municipality zones are always rank 1 of 1 within their own city, so
+    ranking is omitted for them.  Zones with no composite_score are also skipped.
+    """
+    zone_type = row.get("zone_type")
+    if zone_type == "metro_municipality":
+        return None
+    if pd.isna(row.get("composite_score")):
+        return None
+
+    city_scored = (
+        scores_df[
+            (scores_df["city"] == row["city"]) & scores_df["composite_score"].notna()
+        ]
+        .sort_values("composite_score", ascending=False)
+        .reset_index(drop=True)
+    )
+    if city_scored.empty:
+        return None
+
+    matches = city_scored[city_scored["neighborhood_id"] == row["neighborhood_id"]]
+    if matches.empty:
+        return None
+
+    return int(matches.index[0]) + 1, len(city_scored)
+
+
 # ── KPI formatting helpers ────────────────────────────────────────────────────
-# Each returns an HTML snippet using .bs-kv / .bs-ku (value/unit) classes.
-# When the value is NULL, returns a styled "No data" span instead of a bare "—".
 
 _NO_DATA = "<span class='bs-kv-empty'>No data</span>"
 
@@ -45,26 +93,53 @@ def _kpi_year(val) -> str:
 def _kpi_pois(val) -> str:
     if pd.isna(val):
         return _NO_DATA
-    return f"<span class='bs-kv'>{int(val)}</span><span class='bs-ku'>/km²</span>"
+    return f"<span class='bs-kv'>{int(val)}</span><span class='bs-ku'> services/km²</span>"
+
+
+def _kpi_listings(total, sale, rent) -> str:
+    if pd.isna(total):
+        return _NO_DATA
+    s = int(sale) if pd.notna(sale) else 0
+    r = int(rent) if pd.notna(rent) else 0
+    breakdown = f"<span class='bs-ku'> ({s} sale / {r} rent)</span>"
+    return f"<span class='bs-kv'>{int(total)}</span>{breakdown}"
+
+
+def _kpi_area(val) -> str:
+    if pd.isna(val):
+        return _NO_DATA
+    return f"<span class='bs-kv'>{float(val):.1f}</span><span class='bs-ku'> km²</span>"
 
 
 # ── Radar chart ───────────────────────────────────────────────────────────────
 
-_RADAR_LABELS = ["Walkability", "Building", "Price", "Yield", "Market"]
+_RADAR_LABELS = ["Services", "Building", "Price", "Yield", "Market"]
 _RADAR_COLS = [
-    "walkability_score",
+    "services_score",
     "building_quality_score",
     "price_score",
     "yield_score",
     "market_dynamics_score",
 ]
+_RADAR_DESCRIPTIONS = [
+    "Nearby amenities: transport, healthcare, education & retail. Higher = better served.",
+    "Share of buildings built after 2000. Higher = newer housing stock.",
+    "Affordability: median price/m². Higher = lower prices vs. the area.",
+    "Gross annual rental yield. Higher = better estimated return.",
+    "Market liquidity: listing density & price drops. Higher = more activity & motivated sellers.",
+]
 
 
-def _radar_chart(row: pd.Series) -> go.Figure:
-    """Build a Plotly Scatterpolar radar for the five sub-scores."""
+def _radar_chart(row: pd.Series) -> Optional[go.Figure]:
+    """Build a Plotly Scatterpolar radar.  Returns None if all values are zero/null."""
     values = [float(row[c]) if pd.notna(row[c]) else 0.0 for c in _RADAR_COLS]
-    r     = values + [values[0]]
-    theta = _RADAR_LABELS + [_RADAR_LABELS[0]]
+    if all(v == 0.0 for v in values):
+        return None
+
+    r      = values + [values[0]]
+    theta  = _RADAR_LABELS + [_RADAR_LABELS[0]]
+    descs  = _RADAR_DESCRIPTIONS + [_RADAR_DESCRIPTIONS[0]]
+    customdata = [[d] for d in descs]
 
     fig = go.Figure()
     fig.add_trace(
@@ -74,8 +149,15 @@ def _radar_chart(row: pd.Series) -> go.Figure:
             fill="toself",
             fillcolor="rgba(53,37,205,0.15)",
             line=dict(color="#3525CD", width=2),
+            mode="lines+markers",
+            marker=dict(size=12, opacity=0),
             name="",
-            hovertemplate="%{theta}: %{r:.1f}<extra></extra>",
+            customdata=customdata,
+            hovertemplate=(
+                "<b>%{theta}</b>: %{r:.1f}/100"
+                "<br><span style='color:#777;font-size:11px'>%{customdata[0]}</span>"
+                "<extra></extra>"
+            ),
         )
     )
     fig.update_layout(
@@ -96,7 +178,7 @@ def _radar_chart(row: pd.Series) -> go.Figure:
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
-        # Extra margins so axis labels are never clipped
+        hoverdistance=100,
         margin=dict(l=80, r=80, t=40, b=60),
         height=320,
     )
@@ -106,8 +188,13 @@ def _radar_chart(row: pd.Series) -> go.Figure:
 # ── Default state ─────────────────────────────────────────────────────────────
 
 def render_default(scores_df: pd.DataFrame) -> None:
-    """Render the empty-state panel with a Top-5 ranking table."""
-    top5 = scores_df.dropna(subset=["composite_score"]).head(5)
+    """Render the empty-state panel with a Top-5 ranking of capital neighbourhoods."""
+    # Only capital_neighborhood rows are meaningfully comparable at a glance.
+    if "zone_type" in scores_df.columns:
+        pool = scores_df[scores_df["zone_type"] == "capital_neighborhood"]
+    else:
+        pool = scores_df
+    top5 = pool.dropna(subset=["composite_score"]).head(5)
     if top5.empty:
         return
 
@@ -126,8 +213,7 @@ def render_default(scores_df: pd.DataFrame) -> None:
             else '<span style="color:#856404; font-size:0.65rem;">●</span>'
         )
 
-        # Sentinel div — immediately followed by the stHorizontalBlock so that
-        # the CSS :has() adjacent-sibling hover selector in app.py applies.
+        # Sentinel div — triggers the CSS :has() hover selector in app.py.
         st.markdown('<div class="bs-top5-sentinel"></div>', unsafe_allow_html=True)
 
         col_rank, col_info, col_score, col_btn = st.columns([1, 6, 2, 2])
@@ -169,42 +255,61 @@ def render_default(scores_df: pd.DataFrame) -> None:
 
 # ── Detail state ──────────────────────────────────────────────────────────────
 
-def render_detail(row: pd.Series, active_city: str) -> None:
-    """Render header, KPI cards, radar chart, and listings for *row*."""
+def render_detail(row: pd.Series, active_city: str, scores_df: pd.DataFrame) -> None:
+    """Render header, KPI cards, radar chart, and listings for *row*.
+
+    Args:
+        row:         One row from the scores DataFrame (the selected zone).
+        active_city: Metro area name ("Madrid" or "Granada").
+        scores_df:   Full (unfiltered) scores for the current metro area, used
+                     to compute the zone's rank within its city.
+    """
     score        = row["composite_score"]
     completeness = row["data_completeness"]
     score_str    = f"{score:.1f}" if pd.notna(score) else "—"
     is_low_conf  = pd.isna(completeness) or float(completeness) < 0.6
+    zone_type    = str(row.get("zone_type") or "capital_neighborhood")
 
-    badge_html = (
+    conf_badge_html = (
         '<span class="bs-badge bs-badge-low">LOW CONFIDENCE</span>'
         if is_low_conf
         else '<span class="bs-badge bs-badge-high">HIGH CONFIDENCE</span>'
     )
 
-    # ── 0. Back button (styled as plain text link via CSS in app.py) ──────────
+    # ── 0. Back button ────────────────────────────────────────────────────────
     if st.button("← Back to overview", key="back_btn"):
         st.session_state.selected_neighborhood_id = None
-        # Cannot set the selectbox widget key here — it was already rendered
-        # earlier this run and Streamlit would raise StreamlitAPIException.
-        # Instead, raise a flag that app.py consumes *before* the selectbox
-        # is instantiated on the next rerun.
         st.session_state[f"_clear_search_{active_city}"] = True
         st.rerun()
 
-    # ── 1. Header row ─────────────────────────────────────────────────────────
+    # ── 1. Header ─────────────────────────────────────────────────────────────
     hdr_left, hdr_right = st.columns([3, 1.4], vertical_alignment="top")
+
+    # Subtitle: depends on zone_type
+    district = html_module.escape(str(row.get("district_name") or ""))
+    city     = html_module.escape(str(row.get("city") or active_city))
+    city_esc = html_module.escape(active_city)
+
+    if zone_type == "capital_neighborhood":
+        subtitle = f"{district} · {city_esc}"
+    elif zone_type == "metro_neighborhood":
+        subtitle = f"📍 {city} · {city_esc} metro"
+    else:
+        subtitle = f"{city_esc} metro area"
 
     with hdr_left:
         st.markdown(
             f"""
             <div style="padding-top: 0.25rem;">
                 <div style="display:flex; align-items:center; gap:0.55rem; flex-wrap:wrap;
-                            margin-bottom:0.4rem;">
-                    <span class="bs-neighborhood-header">{row['neighborhood_name']}</span>
-                    {badge_html}
+                            margin-bottom:0.35rem;">
+                    <span class="bs-neighborhood-header">
+                        {html_module.escape(str(row['neighborhood_name']))}
+                    </span>
+                    {_zone_badge(zone_type)}
+                    {conf_badge_html}
                 </div>
-                <p class="bs-district">{row['district_name']} · {active_city}</p>
+                <p class="bs-district">{subtitle}</p>
                 <p class="bs-refresh-text" style="margin-top:0.2rem;">Data refreshed daily</p>
             </div>
             """,
@@ -223,43 +328,84 @@ def render_detail(row: pd.Series, active_city: str) -> None:
             unsafe_allow_html=True,
         )
 
-    st.markdown("<div style='margin:1rem 0 0.65rem;'></div>", unsafe_allow_html=True)
+    # ── Rank line ─────────────────────────────────────────────────────────────
+    rank_result = _get_rank(row, scores_df)
+    if rank_result:
+        rank, total = rank_result
+        zone_label = "neighbourhood" if zone_type == "capital_neighborhood" else "zone"
+        st.markdown(
+            f"<p style='font-size:0.75rem; color:#777587; margin:0.1rem 0 0;'>"
+            f"Rank <strong>#{rank}</strong> of {total} {zone_label}s in {city}</p>",
+            unsafe_allow_html=True,
+        )
+    elif zone_type == "metro_municipality":
+        st.markdown(
+            "<p style='font-size:0.75rem; color:#adb5bd; margin:0.1rem 0 0;'>"
+            "Undivided municipality · not comparable with capital rankings</p>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='margin:0.8rem 0 0.5rem;'></div>", unsafe_allow_html=True)
 
     # ── 2. KPI cards ──────────────────────────────────────────────────────────
-    kpis = [
-        ("Median Price",   _kpi_price(row.get("median_sale_price_m2"))),
-        ("Listings",       _kpi_int(row.get("total_listings"))),
-        ("Building Stock", _kpi_year(row.get("median_year_built"))),
-        ("Walkability",    _kpi_pois(row.get("pois_per_km2"))),
-    ]
+    listings_html = _kpi_listings(
+        row.get("total_listings"),
+        row.get("sale_count"),
+        row.get("rent_count"),
+    )
+
+    if zone_type in ("capital_neighborhood", "metro_neighborhood"):
+        kpis = [
+            ("Median Price",     _kpi_price(row.get("median_sale_price_m2"))),
+            ("Listings",         listings_html),
+            ("Building Stock",   _kpi_year(row.get("median_year_built"))),
+            ("Services Density", _kpi_pois(row.get("pois_per_km2"))),
+        ]
+    else:  # metro_municipality
+        kpis = [
+            ("Services Density", _kpi_pois(row.get("pois_per_km2"))),
+            ("Listings",         listings_html),
+            ("Building Stock",   _kpi_year(row.get("median_year_built"))),
+            ("Area",             _kpi_area(row.get("area_km2"))),
+        ]
 
     for col, (label, value_html) in zip(st.columns(4), kpis):
         with col:
             st.markdown(
-                f"""
-                <div class="bs-kpi-card">
-                    <div class="bs-kpi-label">{label}</div>
-                    <div>{value_html}</div>
-                </div>
-                """,
+                f'<div class="bs-kpi-card">'
+                f'<div class="bs-kpi-label">{label}</div>'
+                f'<div>{value_html}</div>'
+                f'</div>',
                 unsafe_allow_html=True,
             )
 
-    st.markdown("<div style='margin:0.9rem 0 0;'></div>", unsafe_allow_html=True)
+    if zone_type == "metro_municipality":
+        st.markdown(
+            "<p style='font-size:0.78rem; color:#adb5bd; margin:0.5rem 0 0; font-style:italic;'>"
+            "This municipality has not been subdivided into zones. "
+            "Scores are not comparable with capital neighbourhood rankings.</p>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='margin:0.6rem 0 0;'></div>", unsafe_allow_html=True)
 
     # ── 3. Radar chart ────────────────────────────────────────────────────────
-    st.plotly_chart(
-        _radar_chart(row),
-        use_container_width=True,
-        config={"displayModeBar": False},
-    )
-    # Caption: must be muted gray — color enforced with !important in app.py CSS
-    st.markdown(
-        "<p class='bs-score-note'>"
-        "Scores: 0–100 percentile rank within city · Higher = better opportunity"
-        "</p>",
-        unsafe_allow_html=True,
-    )
+    radar = _radar_chart(row)
+    if radar is not None:
+        st.plotly_chart(radar, use_container_width=True, config={"displayModeBar": False})
+        st.markdown(
+            "<p class='bs-score-note'>"
+            "Scores: 0–100 percentile rank within city · Hover for details"
+            "</p>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            "<p style='text-align:center; color:#adb5bd; font-size:0.85rem; "
+            "font-style:italic; margin:1.5rem 0;'>"
+            "Insufficient data to display score radar.</p>",
+            unsafe_allow_html=True,
+        )
 
     # ── 4. Market inventory ───────────────────────────────────────────────────
     render_listings_section(row)
@@ -318,7 +464,6 @@ def _build_listings_html(df: pd.DataFrame, median_rent_price_m2) -> str:
     for _, r in df.iterrows():
         op_lower = str(r["operation_type"]).lower()
 
-        # Price drop: BQ BOOL lands as numpy bool_ or float NaN
         _hpd = r.get("has_price_drop")
         has_drop = pd.notna(_hpd) and bool(_hpd)
 
@@ -386,18 +531,22 @@ def _build_listings_html(df: pd.DataFrame, median_rent_price_m2) -> str:
 
 def render_listings_section(neighborhood_row: pd.Series) -> None:
     """Render the Market Inventory section below the radar chart."""
-    nid        = neighborhood_row["neighborhood_id"]
-    nname      = neighborhood_row["neighborhood_name"]
+    nid         = neighborhood_row["neighborhood_id"]
+    nname       = neighborhood_row["neighborhood_name"]
     median_rent = neighborhood_row.get("median_rent_price_m2")
+    zone_type   = str(neighborhood_row.get("zone_type") or "capital_neighborhood")
 
-    # Section title with bottom divider (enforced via CSS .bs-section-title)
-    st.markdown(
-        "<p class='bs-section-title'>Market Inventory</p>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<p class='bs-section-title'>Market Inventory</p>", unsafe_allow_html=True)
+
+    if zone_type == "metro_municipality":
+        st.markdown(
+            f"<p style='font-size:0.78rem; color:#adb5bd; margin:0 0 0.6rem; "
+            f"font-style:italic;'>Showing all listings tracked in "
+            f"{html_module.escape(str(nname))}</p>",
+            unsafe_allow_html=True,
+        )
 
     # ── Filters ───────────────────────────────────────────────────────────────
-    # Use st.pills if available (Streamlit ≥ 1.40); fall back to styled radio.
     _use_pills = hasattr(st, "pills")
 
     f_left, f_right = st.columns(2)
@@ -451,12 +600,16 @@ def render_listings_section(neighborhood_row: pd.Series) -> None:
         )
         return
 
+    # Drop confirmed-inactive listings.
+    if "current_status" in df.columns:
+        df = df[df["current_status"] != "INACTIVE"].copy()
+
     total_count = len(df)
 
     if df.empty:
         st.markdown(
             "<p style='color:#adb5bd; font-size:0.88rem; margin:1rem 0;'>"
-            "No listings found in this neighbourhood.</p>",
+            "No active listings found in this zone.</p>",
             unsafe_allow_html=True,
         )
         return
@@ -488,11 +641,11 @@ def render_listings_section(neighborhood_row: pd.Series) -> None:
     # ── Count line ────────────────────────────────────────────────────────────
     shown = len(df)
     note = (
-        f"Showing {shown} of {total_count} listings in "
-        f"<strong>{html_module.escape(nname)}</strong>"
+        f"Showing {shown} of {total_count} active listings in "
+        f"<strong>{html_module.escape(str(nname))}</strong>"
         if shown < total_count
-        else f"All {total_count} listings in "
-             f"<strong>{html_module.escape(nname)}</strong>"
+        else f"All {total_count} active listings in "
+             f"<strong>{html_module.escape(str(nname))}</strong>"
     )
     st.markdown(
         f"<p style='font-size:0.77rem; color:#adb5bd; margin:0.6rem 0 1rem;'>"
