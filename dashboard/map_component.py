@@ -15,11 +15,18 @@ try:
 except ImportError:  # pragma: no cover
     _BrancaElement = None  # type: ignore
 
+try:
+    import branca.colormap as _branca_cm
+    _COLORMAP = _branca_cm.LinearColormap(
+        colors=["#d73027", "#fc8d59", "#fee08b", "#d9ef8b", "#91cf60", "#1a9850"],
+        vmin=0,
+        vmax=100,
+        caption="Composite Score (0–100)",
+    )
+except ImportError:  # pragma: no cover
+    _COLORMAP = None  # type: ignore
 
-# ---------------------------------------------------------------------------
-# Colour palette
-# ---------------------------------------------------------------------------
-
+# Fallback bands (used only if branca unavailable)
 _SCORE_BANDS: list[tuple[float, str]] = [
     (80, "#1B5E20"),
     (60, "#2A6B2C"),
@@ -31,6 +38,13 @@ _LOW_CONFIDENCE_FILL      = "#E0E0E0"
 _SELECTED_BORDER          = "#3525CD"
 _DEFAULT_BORDER           = "#FFFFFF"
 _LOW_CONFIDENCE_THRESHOLD = 0.6
+
+# Fixed map centers per metro area — prevents outlier polygons from
+# pulling the viewport away from the city.
+_CITY_CENTERS: dict[str, tuple[float, float]] = {
+    "Madrid":  (40.4168, -3.7038),
+    "Granada": (37.1773, -3.5986),
+}
 
 _CARTO_POSITRON = (
     "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
@@ -96,6 +110,8 @@ def _score_to_color(score: Optional[float]) -> str:
     """Map a composite_score (0–100 or None) to a fill hex colour."""
     if score is None or (isinstance(score, float) and pd.isna(score)):
         return _LOW_CONFIDENCE_FILL
+    if _COLORMAP is not None:
+        return _COLORMAP(max(0.0, min(100.0, float(score))))
     for threshold, color in _SCORE_BANDS:
         if score >= threshold:
             return color
@@ -175,6 +191,8 @@ def _enrich_geojson(geojson: dict, scores_df: pd.DataFrame) -> dict:
                     if pd.isna(row["available_sub_scores"])
                     else int(row["available_sub_scores"])
                 ),
+                "zone_type": row.get("zone_type"),
+                "city": row.get("city"),
             }
 
     enriched = copy.deepcopy(geojson)
@@ -183,14 +201,20 @@ def _enrich_geojson(geojson: dict, scores_df: pd.DataFrame) -> dict:
         scores = score_lookup.get(nid, {})
         score_val = scores.get("composite_score")
 
-        feature["properties"]["composite_score"]    = score_val
-        feature["properties"]["data_completeness"]  = scores.get("data_completeness")
+        zone_type = scores.get("zone_type")
+        city      = scores.get("city") or feature["properties"].get("city", "")
+
+        feature["properties"]["composite_score"]      = score_val
+        feature["properties"]["data_completeness"]    = scores.get("data_completeness")
         feature["properties"]["available_sub_scores"] = scores.get("available_sub_scores")
+        feature["properties"]["zone_type"]            = zone_type
 
         # Tooltip display fields
-        feature["properties"]["score_display"] = (
-            f"{score_val:.1f} / 100" if score_val is not None else "—"
-        )
+        score_str = f"{score_val:.1f} / 100" if score_val is not None else "—"
+        if zone_type and zone_type != "capital_neighborhood" and city:
+            feature["properties"]["score_display"] = f"{city} · {score_str}"
+        else:
+            feature["properties"]["score_display"] = score_str
         feature["properties"]["click_hint"] = "Click to explore"
 
     return enriched
@@ -204,6 +228,7 @@ def create_map(
     geojson: dict,
     scores_df: pd.DataFrame,
     selected_neighborhood_id: Optional[str] = None,
+    metro_area: Optional[str] = None,
 ) -> folium.Map:
     """Build a Folium choropleth map of neighbourhood composite scores.
 
@@ -220,6 +245,9 @@ def create_map(
         selected_neighborhood_id:
             Optional ``neighborhood_id`` of the neighbourhood to highlight
             with an indigo (#3525CD) border.
+        metro_area:
+            Metro area name ("Madrid" or "Granada"). Used to centre the map
+            on the capital city rather than fitting all polygons.
 
     Returns:
         A configured ``folium.Map`` object ready to be rendered with
@@ -234,19 +262,35 @@ def create_map(
         f for f in enriched["features"] if f.get("geometry") is not None
     ]
 
-    # 2. Compute bounds and centre for initial view.
-    sw, ne = _compute_bounds(enriched)
-    center_lat = (sw[0] + ne[0]) / 2
-    center_lon = (sw[1] + ne[1]) / 2
+    # 2. Determine if any metro (non-capital) zones are present.
+    has_metro = any(
+        f["properties"].get("zone_type") not in ("capital_neighborhood", None)
+        for f in enriched["features"]
+        if f.get("geometry")
+    )
 
-    # 3. Create base map with CartoDB Positron tiles.
+    # 3. Centre the map. For capital-only views use fixed coordinates + tighter
+    #    zoom; when metro municipalities are included, fit all bounds instead.
+    if metro_area and metro_area in _CITY_CENTERS:
+        center_lat, center_lon = _CITY_CENTERS[metro_area]
+    else:
+        sw, ne = _compute_bounds(enriched)
+        center_lat = (sw[0] + ne[0]) / 2
+        center_lon = (sw[1] + ne[1]) / 2
+
+    zoom = 10 if has_metro else 12
+
     m = folium.Map(
         location=[center_lat, center_lon],
-        zoom_start=12,
+        zoom_start=zoom,
         tiles=_CARTO_POSITRON,
         attr=_CARTO_ATTRIBUTION,
         prefer_canvas=True,
     )
+
+    if has_metro:
+        sw, ne = _compute_bounds(enriched)
+        m.fit_bounds([sw, ne])
 
     # 4. Inject custom tooltip CSS into the map's HTML head.
     if _BrancaElement is not None:
@@ -255,26 +299,43 @@ def create_map(
         except Exception:
             pass  # CSS injection failed — tooltip still works, just unstyled
 
+    # 4b. Add continuous colour-scale legend to the map.
+    if _COLORMAP is not None:
+        try:
+            _COLORMAP.add_to(m)
+        except Exception:
+            pass
+
     # 5. Style and highlight functions.
     def style_function(feature: dict) -> dict:
         props = feature["properties"]
-        score = props.get("composite_score")
+        score        = props.get("composite_score")
         completeness = props.get("data_completeness")
+        zone_type    = props.get("zone_type", "capital_neighborhood")
 
         low_confidence = (
             completeness is None or completeness < _LOW_CONFIDENCE_THRESHOLD
         )
-
         fill_color = _LOW_CONFIDENCE_FILL if low_confidence else _score_to_color(score)
-        dash_array = "5, 5" if low_confidence else None
 
-        return {
+        style: dict = {
             "fillColor": fill_color,
             "color": _DEFAULT_BORDER,
             "weight": 1,
             "fillOpacity": 0.7,
-            **({"dashArray": dash_array} if dash_array else {}),
         }
+
+        if zone_type == "metro_municipality":
+            # Whole municipality (not subdivided): dashed border, lower opacity
+            style["dashArray"] = "5, 5"
+            style["fillOpacity"] = 0.45
+            style["weight"] = 1.5
+        elif zone_type == "metro_neighborhood":
+            # Subdivided metro zone: slightly thinner border
+            style["weight"] = 0.8
+            style["color"] = "#555555"
+
+        return style
 
     def highlight_function(feature: dict) -> dict:  # noqa: ARG001
         return {
@@ -348,8 +409,5 @@ def create_map(
                 },
                 tooltip=None,
             ).add_to(m)
-
-    # 9. Fit the map viewport to the data extent.
-    m.fit_bounds([sw, ne])
 
     return m

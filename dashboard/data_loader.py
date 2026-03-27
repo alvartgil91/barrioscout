@@ -69,24 +69,26 @@ def _get_bq_client() -> bigquery.Client:
 
 
 @st.cache_data(ttl=86400)
-def load_neighborhood_scores(city: str) -> pd.DataFrame:
-    """Return the full scoring card for every neighborhood in *city*.
+def load_neighborhood_scores(metro_area: str) -> pd.DataFrame:
+    """Return the full scoring card for every neighborhood in *metro_area*.
+
+    Includes city neighborhoods AND metropolitan municipalities.
 
     Columns returned (from agg_neighborhood_scores):
-        neighborhood_id, neighborhood_name, city, district_id, district_name,
-        area_km2,
+        neighborhood_id, neighborhood_name, city, metro_area,
+        district_id, district_name, area_km2,
         health_count, education_count, shopping_count, transport_count,
         total_pois, pois_per_km2,
         residential_buildings, avg_year_built, median_year_built,
         pct_post_2000, pct_pre_1960,
         sale_count, rent_count, total_listings, pricedrop_ratio,
         median_sale_price_m2, median_rent_price_m2, gross_rental_yield_pct,
-        walkability_score, building_quality_score, price_score,
+        services_score, building_quality_score, price_score,
         yield_score, market_dynamics_score,
         composite_score, data_completeness, available_sub_scores, scored_at
 
     Args:
-        city: Case-insensitive city name, e.g. "Madrid" or "Granada".
+        metro_area: Metro area name, e.g. "Madrid" or "Granada".
 
     Returns:
         DataFrame with one row per neighborhood.
@@ -96,6 +98,7 @@ def load_neighborhood_scores(city: str) -> pd.DataFrame:
             neighborhood_id,
             neighborhood_name,
             city,
+            metro_area,
             district_id,
             district_name,
             area_km2,
@@ -117,7 +120,7 @@ def load_neighborhood_scores(city: str) -> pd.DataFrame:
             median_sale_price_m2,
             median_rent_price_m2,
             gross_rental_yield_pct,
-            walkability_score,
+            services_score,
             building_quality_score,
             price_score,
             yield_score,
@@ -125,22 +128,25 @@ def load_neighborhood_scores(city: str) -> pd.DataFrame:
             composite_score,
             data_completeness,
             available_sub_scores,
-            scored_at
+            scored_at,
+            zone_type,
+            parent_municipality
         FROM `{DATASET_ANALYTICS}.agg_neighborhood_scores`
-        WHERE LOWER(city) = LOWER(@city)
+        WHERE LOWER(metro_area) = LOWER(@metro_area)
         ORDER BY composite_score DESC NULLS LAST
     """
     job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("city", "STRING", city)]
+        query_parameters=[bigquery.ScalarQueryParameter("metro_area", "STRING", metro_area)]
     )
     client = _get_bq_client()
     return client.query(query, job_config=job_config).to_dataframe()
 
 
 @st.cache_data(ttl=86400)
-def load_neighborhood_geometries(city: str) -> dict:
-    """Return a GeoJSON FeatureCollection for every neighborhood in *city*.
+def load_neighborhood_geometries(metro_area: str) -> dict:
+    """Return a GeoJSON FeatureCollection for every neighborhood in *metro_area*.
 
+    Includes city neighborhoods AND metropolitan municipalities.
     Converts the GEOGRAPHY column to GeoJSON via ST_ASGEOJSON so it can be
     consumed directly by Folium / any GeoJSON-aware library.
 
@@ -149,7 +155,7 @@ def load_neighborhood_geometries(city: str) -> dict:
         district_id, district_name, area_km2
 
     Args:
-        city: Case-insensitive city name, e.g. "Madrid" or "Granada".
+        metro_area: Metro area name, e.g. "Madrid" or "Granada".
 
     Returns:
         GeoJSON FeatureCollection dict.
@@ -164,10 +170,10 @@ def load_neighborhood_geometries(city: str) -> dict:
             area_km2,
             ST_ASGEOJSON(geometry) AS geometry_geojson
         FROM `{DATASET_ANALYTICS}.dim_neighborhoods`
-        WHERE LOWER(city) = LOWER(@city)
+        WHERE LOWER(metro_area) = LOWER(@metro_area)
     """
     job_config = bigquery.QueryJobConfig(
-        query_parameters=[bigquery.ScalarQueryParameter("city", "STRING", city)]
+        query_parameters=[bigquery.ScalarQueryParameter("metro_area", "STRING", metro_area)]
     )
     client = _get_bq_client()
     df = client.query(query, job_config=job_config).to_dataframe()

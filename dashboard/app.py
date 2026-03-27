@@ -6,6 +6,7 @@ Run with:
 
 from __future__ import annotations
 
+import hashlib
 import re
 
 import pandas as pd
@@ -21,7 +22,7 @@ from map_component import create_map
 st.set_page_config(
     page_title="BarrioScout",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
     page_icon="🏘️",
 )
 
@@ -44,7 +45,6 @@ st.markdown(
     footer                                  { visibility: hidden !important; }
     [data-testid="stToolbar"]               { visibility: hidden !important; }
     [data-testid="stDecoration"]            { display: none !important; }
-    [data-testid="collapsedControl"]        { display: none !important; }
     [data-testid="stAppViewBlockContainer"] { padding-top: 0 !important; }
 
     /* ── Layout ── */
@@ -553,55 +553,14 @@ if "selected_city" not in st.session_state:
 if "selected_neighborhood_id" not in st.session_state:
     st.session_state.selected_neighborhood_id = None
 
-# active_city is always read from session state — it's updated exclusively by
-# the Madrid / Granada button click handlers below.
+# active_city is read before the sidebar renders so data can load early.
 active_city: str = st.session_state.selected_city
 
-# ── Header (logo + city toggle) ───────────────────────────────────────────────
-# Three columns: logo | Madrid btn | Granada btn
-hdr_left, c_madrid, c_granada = st.columns([5, 1, 1], vertical_alignment="center")
-
-with hdr_left:
-    st.markdown(
-        '<p class="bs-logo">BarrioScout</p>'
-        '<p class="bs-tagline">Real estate intelligence</p>',
-        unsafe_allow_html=True,
-    )
-
-with c_madrid:
-    if st.button(
-        "Madrid",
-        key="city_btn_Madrid",
-        type="primary" if active_city == "Madrid" else "secondary",
-        use_container_width=True,
-    ):
-        if active_city != "Madrid":
-            st.session_state.selected_city = "Madrid"
-            st.session_state.selected_neighborhood_id = None
-            st.rerun()
-
-with c_granada:
-    if st.button(
-        "Granada",
-        key="city_btn_Granada",
-        type="primary" if active_city == "Granada" else "secondary",
-        use_container_width=True,
-    ):
-        if active_city != "Granada":
-            st.session_state.selected_city = "Granada"
-            st.session_state.selected_neighborhood_id = None
-            st.rerun()
-
-st.markdown(
-    '<div style="border-top:2px solid #3525CD; margin:0.2rem 0 0.75rem;"></div>',
-    unsafe_allow_html=True,
-)
-
-# ── Load data ─────────────────────────────────────────────────────────────────
+# ── Load data (early — needed to populate municipality list in sidebar) ────────
 try:
     with st.spinner(f"Loading {active_city} data…"):
-        scores_df = load_neighborhood_scores(active_city)
-        geojson   = load_neighborhood_geometries(active_city)
+        scores_df = load_neighborhood_scores(metro_area=active_city)
+        geojson   = load_neighborhood_geometries(metro_area=active_city)
 except Exception as exc:
     st.markdown(
         f"""
@@ -616,20 +575,149 @@ except Exception as exc:
     )
     st.stop()
 
+# ── Sidebar ───────────────────────────────────────────────────────────────────
+
+def _on_city_change() -> None:
+    """Reset neighbourhood selection and municipality checkboxes on city change."""
+    st.session_state.selected_neighborhood_id = None
+    for key in list(st.session_state.keys()):
+        if key.startswith("muni_cb_"):
+            del st.session_state[key]
+    # Drop city-scoped search state so the selectbox resets cleanly
+    for city in ("Madrid", "Granada"):
+        st.session_state.pop(f"nb_search_{city}", None)
+        st.session_state.pop(f"nb_search_prev_{city}", None)
+
+
+with st.sidebar:
+    st.markdown(
+        '<p class="bs-logo">BarrioScout</p>'
+        '<p class="bs-tagline">Real estate intelligence</p>',
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div style="border-top:2px solid #3525CD; margin:0.3rem 0 0.8rem;"></div>',
+        unsafe_allow_html=True,
+    )
+
+    # City toggle (radio styled as pill group via existing CSS)
+    st.radio(
+        "Área metropolitana",
+        options=["Madrid", "Granada"],
+        key="selected_city",
+        horizontal=True,
+        on_change=_on_city_change,
+        label_visibility="collapsed",
+    )
+    # Re-read in case the radio just updated session state
+    active_city = st.session_state.selected_city
+
+    st.divider()
+
+    # Capital section — always visible
+    _has_zone_type = "zone_type" in scores_df.columns
+    if _has_zone_type:
+        _n_capital = int((scores_df["zone_type"] == "capital_neighborhood").sum())
+    else:
+        _n_capital = len(scores_df)
+
+    st.markdown(
+        f"<p style='font-size:0.8rem; font-weight:700; color:#191C1D; margin:0 0 0.2rem;'>"
+        f"📍 {active_city} capital</p>"
+        f"<p style='font-size:0.75rem; color:#777587; margin:0 0 0.6rem;'>"
+        f"{_n_capital} neighbourhoods</p>",
+        unsafe_allow_html=True,
+    )
+
+    # Metro municipalities section
+    selected_municipalities: list[str] = []
+    if _has_zone_type:
+        _metro_df = (
+            scores_df[scores_df["zone_type"] != "capital_neighborhood"]
+            .groupby("city", as_index=False)
+            .agg(n_zones=("neighborhood_id", "count"))
+            .sort_values("city")
+        )
+
+        if not _metro_df.empty:
+            st.markdown(
+                "<p style='font-size:0.8rem; font-weight:700; color:#191C1D; margin:0 0 0.4rem;'>"
+                "Metro municipalities</p>",
+                unsafe_allow_html=True,
+            )
+
+            _all_muni_names = _metro_df["city"].tolist()
+
+            _btn_col1, _btn_col2 = st.columns(2)
+            with _btn_col1:
+                if st.button("All", key="select_all", use_container_width=True):
+                    for _m in _all_muni_names:
+                        st.session_state[f"muni_cb_{_m}"] = True
+                    st.rerun()
+            with _btn_col2:
+                if st.button("None", key="select_none", use_container_width=True):
+                    for _m in _all_muni_names:
+                        st.session_state[f"muni_cb_{_m}"] = False
+                    st.rerun()
+
+            with st.container(height=340):
+                for _, _muni in _metro_df.iterrows():
+                    _cb_key = f"muni_cb_{_muni['city']}"
+                    if _cb_key not in st.session_state:
+                        st.session_state[_cb_key] = False
+                    _checked = st.checkbox(
+                        f"{_muni['city']} ({int(_muni['n_zones'])})",
+                        key=_cb_key,
+                    )
+                    if _checked:
+                        selected_municipalities.append(_muni["city"])
+
+# ── Filter data based on sidebar selection ────────────────────────────────────
+_has_zone_type = "zone_type" in scores_df.columns
+if _has_zone_type:
+    _show_mask = (scores_df["zone_type"] == "capital_neighborhood") | (
+        scores_df["city"].isin(selected_municipalities)
+    )
+    filtered_scores_df = scores_df[_show_mask].copy()
+else:
+    filtered_scores_df = scores_df.copy()
+
+_visible_ids = set(filtered_scores_df["neighborhood_id"])
+filtered_geojson: dict = {
+    "type": "FeatureCollection",
+    "features": [
+        f
+        for f in geojson["features"]
+        if f["properties"].get("neighborhood_id") in _visible_ids
+    ],
+}
+
+# ── Main area header ──────────────────────────────────────────────────────────
+st.markdown(
+    '<div style="border-top:2px solid #3525CD; margin:0.2rem 0 0.75rem;"></div>',
+    unsafe_allow_html=True,
+)
+
 # ── Two-panel layout ──────────────────────────────────────────────────────────
 map_col, detail_col = st.columns([45, 55])
 
 # ── Left panel: interactive choropleth map ────────────────────────────────────
 with map_col:
     folium_map = create_map(
-        geojson=geojson,
-        scores_df=scores_df,
+        geojson=filtered_geojson,
+        scores_df=filtered_scores_df,
         selected_neighborhood_id=st.session_state.selected_neighborhood_id,
+        metro_area=active_city,
     )
 
+    # Key includes a hash of selected municipalities so the map fully re-initializes
+    # (and fit_bounds is re-applied) whenever the selection changes.
+    _muni_hash = hashlib.md5(
+        "_".join(sorted(selected_municipalities)).encode()
+    ).hexdigest()[:8]
     map_data: dict = st_folium(
         folium_map,
-        key=f"map_{active_city}",   # key scoped to city so map resets on switch
+        key=f"map_{active_city}_{_muni_hash}",   # key scoped to city+selection
         height=620,
         use_container_width=True,
     )
@@ -663,10 +751,10 @@ with map_col:
 # ── Right panel: neighbourhood detail ────────────────────────────────────────
 with detail_col:
     # ── Neighbourhood search — always visible above the scrollable panel ──────
-    # Build lookup: "Name (District)" → neighborhood_id
+    # Build lookup from filtered scores: "Name (District)" → neighborhood_id
     _nb_lookup: dict[str, str] = {
         f"{r['neighborhood_name']} ({r['district_name']})": r["neighborhood_id"]
-        for _, r in scores_df.iterrows()
+        for _, r in filtered_scores_df.iterrows()
     }
     _search_key  = f"nb_search_{active_city}"
     _search_prev = f"nb_search_prev_{active_city}"
@@ -707,18 +795,18 @@ with detail_col:
     # Scrollable container — matches the map height so the two panels align.
     with st.container(height=640, border=False):
         if nid is None:
-            render_default(scores_df)
+            render_default(filtered_scores_df)
         else:
             match_rows = scores_df[scores_df["neighborhood_id"] == nid]
             if match_rows.empty:
                 st.info("No score data available for this neighbourhood.")
-                render_default(scores_df)
+                render_default(filtered_scores_df)
             else:
                 render_detail(match_rows.iloc[0], active_city)
 
 # ── Footer ────────────────────────────────────────────────────────────────────
-_n_nb   = len(scores_df)
-_n_list = int(scores_df["total_listings"].sum()) if not scores_df.empty else 0
+_n_nb   = len(filtered_scores_df)
+_n_list = int(filtered_scores_df["total_listings"].sum()) if not filtered_scores_df.empty else 0
 
 st.markdown(
     f"""
