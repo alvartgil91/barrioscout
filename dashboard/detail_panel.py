@@ -107,7 +107,7 @@ def _kpi_year(val) -> str:
 def _kpi_pois(val) -> str:
     if pd.isna(val):
         return _NO_DATA
-    return f"<span class='bs-kv'>{int(val)}</span><span class='bs-ku'> per km²</span>"
+    return f"<span class='bs-kv'>{int(val)}</span><span class='bs-ku' style='white-space:nowrap;'> /km²</span>"
 
 
 def _kpi_listings(total, sale, rent) -> str:
@@ -208,7 +208,7 @@ def _radar_chart(row: pd.Series) -> Optional[go.Figure]:
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
         hoverdistance=100,
-        margin=dict(l=60, r=60, t=30, b=30),
+        margin=dict(l=55, r=55, t=20, b=20),
         height=290,
     )
     return fig

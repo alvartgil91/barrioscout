@@ -302,7 +302,7 @@ st.markdown(
         border: 1px solid #E7E8E9;
         border-radius: 8px;
         padding: 1.25rem;
-        min-height: 120px;
+        min-height: 140px;
         display: flex;
         flex-direction: column;
         justify-content: center;
