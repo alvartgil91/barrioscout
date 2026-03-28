@@ -625,7 +625,7 @@ with st.sidebar:
 
     # City toggle (radio styled as pill group via existing CSS)
     st.radio(
-        "Área metropolitana",
+        "Metropolitan area",
         options=["Madrid", "Granada"],
         key="selected_city",
         horizontal=True,

@@ -22,9 +22,9 @@ from data_loader import load_listings
 def _zone_badge(zone_type: Optional[str]) -> str:
     """Return an inline HTML badge for the zone type."""
     cfg: dict[str, tuple[str, str, str]] = {
-        "capital_neighborhood": ("Barrio",     "#1a9850", "#e8f5e9"),
-        "metro_neighborhood":   ("Zona metro", "#1565c0", "#e3f2fd"),
-        "metro_municipality":   ("Municipio",  "#616161", "#f5f5f5"),
+        "capital_neighborhood": ("Neighbourhood", "#1a9850", "#e8f5e9"),
+        "metro_neighborhood":   ("Metro zone",    "#1565c0", "#e3f2fd"),
+        "metro_municipality":   ("Municipality",  "#616161", "#f5f5f5"),
     }
     label, fg, bg = cfg.get(zone_type or "", ("", "#333", "#eee"))
     if not label:
@@ -115,10 +115,22 @@ def _kpi_listings(total, sale, rent) -> str:
         return _NO_DATA
     s = int(sale) if pd.notna(sale) else 0
     r = int(rent) if pd.notna(rent) else 0
+    _sale_badge = (
+        '<span style="background:#E8F5E9; color:#2E7D32; font-size:9px; font-weight:700; '
+        'padding:2px 6px; border-radius:3px; white-space:nowrap;">SALE</span>'
+    )
+    _rent_badge = (
+        '<span style="background:#E3F2FD; color:#1565C0; font-size:9px; font-weight:700; '
+        'padding:2px 6px; border-radius:3px; white-space:nowrap;">RENT</span>'
+    )
     return (
         f"<span class='bs-kv'>{int(total)}</span>"
-        f"<span class='bs-ku' style='display:block; margin-top:3px;'>"
-        f"Sale {s} · Rent {r}</span>"
+        f"<span style='display:block; margin-top:4px; white-space:nowrap;'>"
+        f"{_sale_badge}"
+        f"<span style='font-size:11px; color:#64748B;'> {s}</span>"
+        f"<span style='margin-left:6px;'>{_rent_badge}</span>"
+        f"<span style='font-size:11px; color:#64748B;'> {r}</span>"
+        f"</span>"
     )
 
 
