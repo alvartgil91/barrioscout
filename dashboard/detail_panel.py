@@ -71,10 +71,19 @@ def _get_rank(row: pd.Series, scores_df: pd.DataFrame) -> Optional[tuple[int, in
 _NO_DATA = "<span class='bs-kv-empty'>No data</span>"
 
 
+def _score_label(score: float) -> tuple[str, str]:
+    """Return (label, color_hex) for a composite score."""
+    if score >= 80: return "Excellent", "#1a9850"
+    if score >= 65: return "Very Good", "#2a6b2c"
+    if score >= 50: return "Good", "#3525CD"
+    if score >= 35: return "Fair", "#e67e22"
+    return "Needs Improvement", "#c0392b"
+
+
 def _kpi_price(val) -> str:
     if pd.isna(val):
         return _NO_DATA
-    num = f"€{int(val):,}".replace(",", ".")
+    num = f"{int(val):,}".replace(",", ".") + " €"
     return f"<span class='bs-kv'>{num}</span><span class='bs-ku'>/m²</span>"
 
 
@@ -113,7 +122,7 @@ def _kpi_area(val) -> str:
 
 # ── Radar chart ───────────────────────────────────────────────────────────────
 
-_RADAR_LABELS = ["Services", "Building", "Price", "Yield", "Market"]
+_RADAR_LABELS = ["Services 30%", "Building 20%", "Price 20%", "Yield 20%", "Market 10%"]
 _RADAR_COLS = [
     "services_score",
     "building_quality_score",
@@ -185,6 +194,44 @@ def _radar_chart(row: pd.Series) -> Optional[go.Figure]:
     return fig
 
 
+# ── Sub-score progress bars ───────────────────────────────────────────────────
+
+_SCORE_COMPONENTS: list[tuple[str, str, int]] = [
+    ("Services", "services_score",          30),
+    ("Building", "building_quality_score",  20),
+    ("Price",    "price_score",             20),
+    ("Yield",    "yield_score",             20),
+    ("Market",   "market_dynamics_score",   10),
+]
+
+
+def _render_score_bars(row: pd.Series) -> None:
+    """Render horizontal progress bars for each sub-score with its weight."""
+    bars_html_parts = []
+    for label, col, weight in _SCORE_COMPONENTS:
+        raw = row.get(col)
+        has_val = pd.notna(raw)
+        val = float(raw) if has_val else 0.0
+        val_display = f"{val:.0f}" if has_val else "—"
+        fill_pct    = f"{val:.2f}%" if has_val else "0%"
+        fill_color  = "#3525CD" if has_val else "#E0E0E0"
+        opacity     = "1" if has_val else "0.4"
+        bars_html_parts.append(
+            f'<div style="display:flex; align-items:center; gap:8px; '
+            f'margin-bottom:6px; opacity:{opacity};">'
+            f'<span style="font-size:11px; font-weight:600; color:#64748B; '
+            f'width:90px; flex-shrink:0;">{label} {weight}%</span>'
+            f'<div style="flex:1; height:6px; background:#F0F1F2; '
+            f'border-radius:3px; overflow:hidden;">'
+            f'<div style="height:100%; width:{fill_pct}; background:{fill_color}; '
+            f'border-radius:3px;"></div></div>'
+            f'<span style="font-size:12px; font-weight:700; color:#191C1D; '
+            f'width:36px; text-align:right; flex-shrink:0;">{val_display}</span>'
+            f'</div>'
+        )
+    st.markdown("\n".join(bars_html_parts), unsafe_allow_html=True)
+
+
 # ── Default state ─────────────────────────────────────────────────────────────
 
 def render_default(scores_df: pd.DataFrame) -> None:
@@ -194,7 +241,12 @@ def render_default(scores_df: pd.DataFrame) -> None:
         pool = scores_df[scores_df["zone_type"] == "capital_neighborhood"]
     else:
         pool = scores_df
-    top5 = pool.dropna(subset=["composite_score"]).head(5)
+    top5 = (
+        pool
+        .dropna(subset=["composite_score"])
+        .sort_values("composite_score", ascending=False)
+        .head(5)
+    )
     if top5.empty:
         return
 
@@ -317,12 +369,21 @@ def render_detail(row: pd.Series, active_city: str, scores_df: pd.DataFrame) -> 
         )
 
     with hdr_right:
+        _label_html = ""
+        if pd.notna(score):
+            _label, _label_color = _score_label(float(score))
+            _label_html = (
+                f'<p style="font-size:11px; color:{_label_color}; font-weight:700; '
+                f'text-transform:uppercase; letter-spacing:0.08em; margin:2px 0 0; '
+                f'text-align:right;">{_label}</p>'
+            )
         st.markdown(
             f"""
             <div style="text-align:right; padding-top:0.15rem; padding-right:4px; line-height:1;">
                 <span class="bs-score-num">{score_str}</span>
                 <span class="bs-score-denom">/100</span>
                 <p class="bs-score-caption" style="text-align:right;">Score</p>
+                {_label_html}
             </div>
             """,
             unsafe_allow_html=True,
@@ -389,7 +450,10 @@ def render_detail(row: pd.Series, active_city: str, scores_df: pd.DataFrame) -> 
 
     st.markdown("<div style='margin:0.6rem 0 0;'></div>", unsafe_allow_html=True)
 
-    # ── 3. Radar chart ────────────────────────────────────────────────────────
+    # ── 3. Sub-score bars + radar chart ──────────────────────────────────────
+    _render_score_bars(row)
+    st.markdown("<div style='margin:0.4rem 0;'></div>", unsafe_allow_html=True)
+
     radar = _radar_chart(row)
     if radar is not None:
         st.plotly_chart(radar, use_container_width=True, config={"displayModeBar": False})
@@ -588,6 +652,16 @@ def render_listings_section(neighborhood_row: pd.Series) -> None:
                 label_visibility="collapsed",
             )
 
+    st.markdown('<p class="bs-filter-label" style="margin-top:6px;">Sort by</p>', unsafe_allow_html=True)
+    _sort_options = ["Price ↑", "Price ↓", "€/m² ↑", "€/m² ↓", "Area ↓"]
+    sort_by = st.selectbox(
+        "Sort by",
+        options=_sort_options,
+        index=0,
+        key=f"lt_sort_{nid}",
+        label_visibility="collapsed",
+    )
+
     # ── Load ──────────────────────────────────────────────────────────────────
     try:
         with st.spinner("Loading listings…"):
@@ -625,7 +699,15 @@ def render_listings_section(neighborhood_row: pd.Series) -> None:
     elif bed_filter == "3+":
         df = df[df["bedrooms"].notna() & (df["bedrooms"] >= 3)]
 
-    df = df.sort_values("price", ascending=True, na_position="last")
+    _sort_map = {
+        "Price ↑":  ("price",        True),
+        "Price ↓":  ("price",        False),
+        "€/m² ↑":  ("price_per_m2", True),
+        "€/m² ↓":  ("price_per_m2", False),
+        "Area ↓":   ("area_m2",      False),
+    }
+    _sort_col, _sort_asc = _sort_map.get(sort_by, ("price", True))
+    df = df.sort_values(_sort_col, ascending=_sort_asc, na_position="last")
 
     if df.empty:
         st.markdown(
@@ -649,6 +731,6 @@ def render_listings_section(neighborhood_row: pd.Series) -> None:
     )
     st.markdown(
         f"<p style='font-size:0.77rem; color:#adb5bd; margin:0.6rem 0 1rem;'>"
-        f"{note} · sorted by price ascending</p>",
+        f"{note} · sorted by {sort_by}</p>",
         unsafe_allow_html=True,
     )

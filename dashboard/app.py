@@ -542,6 +542,27 @@ st.markdown(
     }
     .bs-footer .accent { font-weight: 800; color: #64748B; }
     .bs-footer .sep    { color: #94A3B8; }
+
+    /* ── Score label verbal ── */
+    .bs-score-label {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin: 2px 0 0;
+        text-align: right;
+    }
+
+    /* ── Map legend ── */
+    .bs-map-legend {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 4px;
+        font-size: 11px;
+        color: #64748B;
+        font-weight: 500;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -580,9 +601,7 @@ except Exception as exc:
 def _on_city_change() -> None:
     """Reset neighbourhood selection and municipality checkboxes on city change."""
     st.session_state.selected_neighborhood_id = None
-    for key in list(st.session_state.keys()):
-        if key.startswith("muni_cb_"):
-            del st.session_state[key]
+    st.session_state.pop("muni_multiselect", None)
     # Drop city-scoped search state so the selectbox resets cleanly
     for city in ("Madrid", "Granada"):
         st.session_state.pop(f"nb_search_{city}", None)
@@ -608,6 +627,7 @@ with st.sidebar:
         horizontal=True,
         on_change=_on_city_change,
         label_visibility="collapsed",
+        help="Switch between Madrid and Granada metropolitan areas",
     )
     # Re-read in case the radio just updated session state
     active_city = st.session_state.selected_city
@@ -647,30 +667,22 @@ with st.sidebar:
             )
 
             _all_muni_names = _metro_df["city"].tolist()
+            _muni_display = {
+                row["city"]: f"{row['city']} ({int(row['n_zones'])})"
+                for _, row in _metro_df.iterrows()
+            }
+            _display_to_city = {v: k for k, v in _muni_display.items()}
 
-            _btn_col1, _btn_col2 = st.columns(2)
-            with _btn_col1:
-                if st.button("All", key="select_all", use_container_width=True):
-                    for _m in _all_muni_names:
-                        st.session_state[f"muni_cb_{_m}"] = True
-                    st.rerun()
-            with _btn_col2:
-                if st.button("None", key="select_none", use_container_width=True):
-                    for _m in _all_muni_names:
-                        st.session_state[f"muni_cb_{_m}"] = False
-                    st.rerun()
-
-            with st.container(height=340):
-                for _, _muni in _metro_df.iterrows():
-                    _cb_key = f"muni_cb_{_muni['city']}"
-                    if _cb_key not in st.session_state:
-                        st.session_state[_cb_key] = False
-                    _checked = st.checkbox(
-                        f"{_muni['city']} ({int(_muni['n_zones'])})",
-                        key=_cb_key,
-                    )
-                    if _checked:
-                        selected_municipalities.append(_muni["city"])
+            _selected_display = st.multiselect(
+                "Metro municipalities",
+                options=list(_muni_display.values()),
+                default=[],
+                placeholder="Type to search…",
+                key="muni_multiselect",
+                label_visibility="collapsed",
+                help="Add metropolitan municipalities to the map. Only capital neighbourhoods are shown by default.",
+            )
+            selected_municipalities = [_display_to_city[d] for d in _selected_display]
 
 # ── Filter data based on sidebar selection ────────────────────────────────────
 _has_zone_type = "zone_type" in scores_df.columns
@@ -692,6 +704,12 @@ filtered_geojson: dict = {
     ],
 }
 
+# ── Sidebar neighbourhood counter (needs filtered_scores_df, computed above) ──
+with st.sidebar:
+    st.caption(
+        f"Showing {len(filtered_scores_df)} of {len(scores_df)} neighbourhoods"
+    )
+
 # ── Main area header ──────────────────────────────────────────────────────────
 st.markdown(
     '<div style="border-top:2px solid #3525CD; margin:0.2rem 0 0.75rem;"></div>',
@@ -699,7 +717,7 @@ st.markdown(
 )
 
 # ── Two-panel layout ──────────────────────────────────────────────────────────
-map_col, detail_col = st.columns([45, 55])
+map_col, detail_col = st.columns([58, 42])
 
 # ── Left panel: interactive choropleth map ────────────────────────────────────
 with map_col:
@@ -720,6 +738,25 @@ with map_col:
         key=f"map_{active_city}_{_muni_hash}",   # key scoped to city+selection
         height=620,
         use_container_width=True,
+    )
+
+    # ── Colour-scale legend (replaces branca legend inside the iframe) ─────────
+    st.markdown(
+        """
+        <div style="display:flex; align-items:center; gap:8px; margin-top:4px;
+                    padding:0 4px; font-size:11px; color:#64748B;
+                    font-family:Inter,sans-serif;">
+            <span style="font-weight:600;">Score</span>
+            <span>Low</span>
+            <div style="width:140px; height:8px; border-radius:4px;
+                 background:linear-gradient(to right,
+                     #ffffd9, #7fcdbb, #2c7fb8, #253494);"></div>
+            <span>High</span>
+            <span style="margin-left:8px; color:#C0C5CC;">·</span>
+            <span style="color:#C0C5CC;">Grey = insufficient data</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     # ── Click handler ─────────────────────────────────────────────────────────

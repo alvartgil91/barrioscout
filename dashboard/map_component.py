@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover
 try:
     import branca.colormap as _branca_cm
     _COLORMAP = _branca_cm.LinearColormap(
-        colors=["#d73027", "#fc8d59", "#fee08b", "#d9ef8b", "#91cf60", "#1a9850"],
+        colors=["#ffffd9", "#c7e9b4", "#7fcdbb", "#41b6c4", "#2c7fb8", "#253494"],
         vmin=0,
         vmax=100,
         caption="Composite Score (0–100)",
@@ -278,7 +278,7 @@ def create_map(
         center_lat = (sw[0] + ne[0]) / 2
         center_lon = (sw[1] + ne[1]) / 2
 
-    zoom = 10 if has_metro else 12
+    zoom = 11 if has_metro else 12
 
     m = folium.Map(
         location=[center_lat, center_lon],
@@ -299,12 +299,7 @@ def create_map(
         except Exception:
             pass  # CSS injection failed — tooltip still works, just unstyled
 
-    # 4b. Add continuous colour-scale legend to the map.
-    if _COLORMAP is not None:
-        try:
-            _COLORMAP.add_to(m)
-        except Exception:
-            pass
+    # 4b. Branca legend intentionally omitted — replaced by HTML legend in app.py.
 
     # 5. Style and highlight functions.
     def style_function(feature: dict) -> dict:
@@ -404,7 +399,7 @@ def create_map(
                     "fillColor": _SELECTED_BORDER,
                     "color": _SELECTED_BORDER,
                     "weight": 3.5,
-                    "fillOpacity": 0.08,
+                    "fillOpacity": 0.30,
                     "dashArray": None,
                 },
                 tooltip=None,
