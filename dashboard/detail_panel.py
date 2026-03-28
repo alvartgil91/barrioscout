@@ -125,11 +125,11 @@ def _kpi_listings(total, sale, rent) -> str:
     )
     return (
         f"<span class='bs-kv'>{int(total)}</span>"
-        f"<span style='display:block; margin-top:4px; white-space:nowrap;'>"
-        f"{_sale_badge}"
-        f"<span style='font-size:11px; color:#64748B;'> {s}</span>"
-        f"<span style='margin-left:6px;'>{_rent_badge}</span>"
-        f"<span style='font-size:11px; color:#64748B;'> {r}</span>"
+        f"<span style='display:block; margin-top:4px;'>"
+        f"{_sale_badge}<span style='font-size:11px; color:#64748B;'> {s}</span>"
+        f"</span>"
+        f"<span style='display:block; margin-top:2px;'>"
+        f"{_rent_badge}<span style='font-size:11px; color:#64748B;'> {r}</span>"
         f"</span>"
     )
 
