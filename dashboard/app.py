@@ -721,7 +721,7 @@ st.markdown(
 )
 
 # ── Two-panel layout ──────────────────────────────────────────────────────────
-map_col, detail_col = st.columns([58, 42])
+map_col, detail_col = st.columns([55, 45])
 
 # ── Left panel: interactive choropleth map ────────────────────────────────────
 with map_col:
