@@ -302,7 +302,10 @@ st.markdown(
         border: 1px solid #E7E8E9;
         border-radius: 8px;
         padding: 1.25rem;
-        min-height: 80px;
+        min-height: 120px;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
     }
     .bs-kpi-label {
         font-size: 10px;

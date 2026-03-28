@@ -83,8 +83,13 @@ def _score_label(score: float) -> tuple[str, str]:
 def _kpi_price(val) -> str:
     if pd.isna(val):
         return _NO_DATA
-    num = f"{int(val):,}".replace(",", ".") + " €"
-    return f"<span class='bs-kv'>{num}</span><span class='bs-ku'>/m²</span>"
+    num = f"{int(val):,}".replace(",", ".")
+    return (
+        f'<div style="white-space:nowrap;">'
+        f"<span class='bs-kv'>{num}</span>"
+        f"<span class='bs-ku'> €/m²</span>"
+        f"</div>"
+    )
 
 
 def _kpi_int(val) -> str:
@@ -102,7 +107,7 @@ def _kpi_year(val) -> str:
 def _kpi_pois(val) -> str:
     if pd.isna(val):
         return _NO_DATA
-    return f"<span class='bs-kv'>{int(val)}</span><span class='bs-ku'> services/km²</span>"
+    return f"<span class='bs-kv'>{int(val)}</span><span class='bs-ku'> per km²</span>"
 
 
 def _kpi_listings(total, sale, rent) -> str:
@@ -122,7 +127,7 @@ def _kpi_area(val) -> str:
 
 # ── Radar chart ───────────────────────────────────────────────────────────────
 
-_RADAR_LABELS = ["Services 30%", "Building 20%", "Price 20%", "Yield 20%", "Market 10%"]
+_RADAR_LABELS = ["Services", "Building", "Price", "Yield", "Market"]
 _RADAR_COLS = [
     "services_score",
     "building_quality_score",
@@ -179,7 +184,7 @@ def _radar_chart(row: pd.Series) -> Optional[go.Figure]:
                 tickvals=[0, 25, 50, 75, 100],
             ),
             angularaxis=dict(
-                tickfont=dict(size=12, color="#191C1D", family="Inter, sans-serif"),
+                tickfont=dict(size=11, color="#191C1D", family="Inter, sans-serif"),
                 linecolor="#E7E8E9",
             ),
             bgcolor="rgba(0,0,0,0)",
@@ -188,8 +193,8 @@ def _radar_chart(row: pd.Series) -> Optional[go.Figure]:
         plot_bgcolor="rgba(0,0,0,0)",
         showlegend=False,
         hoverdistance=100,
-        margin=dict(l=80, r=80, t=40, b=60),
-        height=320,
+        margin=dict(l=60, r=60, t=30, b=30),
+        height=290,
     )
     return fig
 
@@ -268,7 +273,7 @@ def render_default(scores_df: pd.DataFrame) -> None:
         # Sentinel div — triggers the CSS :has() hover selector in app.py.
         st.markdown('<div class="bs-top5-sentinel"></div>', unsafe_allow_html=True)
 
-        col_rank, col_info, col_score, col_btn = st.columns([1, 6, 2, 2])
+        col_rank, col_info, col_score, col_btn = st.columns([1, 6, 2.5, 1.5])
 
         with col_rank:
             st.markdown(
@@ -292,7 +297,7 @@ def render_default(scores_df: pd.DataFrame) -> None:
             )
         with col_btn:
             if st.button(
-                "Explore →",
+                "View →",
                 key=f"top5_{r['neighborhood_id']}",
                 use_container_width=True,
             ):
@@ -417,17 +422,17 @@ def render_detail(row: pd.Series, active_city: str, scores_df: pd.DataFrame) -> 
 
     if zone_type in ("capital_neighborhood", "metro_neighborhood"):
         kpis = [
-            ("Median Price",     _kpi_price(row.get("median_sale_price_m2"))),
-            ("Listings",         listings_html),
-            ("Building Stock",   _kpi_year(row.get("median_year_built"))),
-            ("Services Density", _kpi_pois(row.get("pois_per_km2"))),
+            ("Price / m²",  _kpi_price(row.get("median_sale_price_m2"))),
+            ("Listings",    listings_html),
+            ("Buildings",   _kpi_year(row.get("median_year_built"))),
+            ("Services",    _kpi_pois(row.get("pois_per_km2"))),
         ]
     else:  # metro_municipality
         kpis = [
-            ("Services Density", _kpi_pois(row.get("pois_per_km2"))),
-            ("Listings",         listings_html),
-            ("Building Stock",   _kpi_year(row.get("median_year_built"))),
-            ("Area",             _kpi_area(row.get("area_km2"))),
+            ("Services",  _kpi_pois(row.get("pois_per_km2"))),
+            ("Listings",  listings_html),
+            ("Buildings", _kpi_year(row.get("median_year_built"))),
+            ("Area",      _kpi_area(row.get("area_km2"))),
         ]
 
     for col, (label, value_html) in zip(st.columns(4), kpis):
@@ -450,10 +455,7 @@ def render_detail(row: pd.Series, active_city: str, scores_df: pd.DataFrame) -> 
 
     st.markdown("<div style='margin:0.6rem 0 0;'></div>", unsafe_allow_html=True)
 
-    # ── 3. Sub-score bars + radar chart ──────────────────────────────────────
-    _render_score_bars(row)
-    st.markdown("<div style='margin:0.4rem 0;'></div>", unsafe_allow_html=True)
-
+    # ── 3. Radar chart (visual) + score breakdown expander ───────────────────
     radar = _radar_chart(row)
     if radar is not None:
         st.plotly_chart(radar, use_container_width=True, config={"displayModeBar": False})
@@ -470,6 +472,9 @@ def render_detail(row: pd.Series, active_city: str, scores_df: pd.DataFrame) -> 
             "Insufficient data to display score radar.</p>",
             unsafe_allow_html=True,
         )
+
+    with st.expander("Score breakdown", expanded=False):
+        _render_score_bars(row)
 
     # ── 4. Market inventory ───────────────────────────────────────────────────
     render_listings_section(row)
