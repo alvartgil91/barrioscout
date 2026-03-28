@@ -306,6 +306,7 @@ st.markdown(
         display: flex;
         flex-direction: column;
         justify-content: center;
+        box-sizing: border-box;
     }
     .bs-kpi-label {
         font-size: 10px;

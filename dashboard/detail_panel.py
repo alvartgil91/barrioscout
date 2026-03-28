@@ -115,8 +115,11 @@ def _kpi_listings(total, sale, rent) -> str:
         return _NO_DATA
     s = int(sale) if pd.notna(sale) else 0
     r = int(rent) if pd.notna(rent) else 0
-    breakdown = f"<span class='bs-ku'> ({s} sale / {r} rent)</span>"
-    return f"<span class='bs-kv'>{int(total)}</span>{breakdown}"
+    return (
+        f"<span class='bs-kv'>{int(total)}</span>"
+        f"<span class='bs-ku' style='display:block; margin-top:3px;'>"
+        f"Sale {s} · Rent {r}</span>"
+    )
 
 
 def _kpi_area(val) -> str:
@@ -297,7 +300,7 @@ def render_default(scores_df: pd.DataFrame) -> None:
             )
         with col_btn:
             if st.button(
-                "View →",
+                "→",
                 key=f"top5_{r['neighborhood_id']}",
                 use_container_width=True,
             ):
@@ -456,20 +459,27 @@ def render_detail(row: pd.Series, active_city: str, scores_df: pd.DataFrame) -> 
     st.markdown("<div style='margin:0.6rem 0 0;'></div>", unsafe_allow_html=True)
 
     # ── 3. Radar chart (visual) + score breakdown expander ───────────────────
-    radar = _radar_chart(row)
-    if radar is not None:
-        st.plotly_chart(radar, use_container_width=True, config={"displayModeBar": False})
-        st.markdown(
-            "<p class='bs-score-note'>"
-            "Scores: 0–100 percentile rank within city · Hover for details"
-            "</p>",
-            unsafe_allow_html=True,
-        )
+    _n_scores = sum(1 for col in _RADAR_COLS if pd.notna(row.get(col)))
+
+    if _n_scores >= 3:
+        radar = _radar_chart(row)
+        if radar is not None:
+            st.plotly_chart(radar, use_container_width=True, config={"displayModeBar": False})
+            st.markdown(
+                "<p class='bs-score-note'>"
+                "Scores: 0–100 percentile rank within city · Hover for details"
+                "</p>",
+                unsafe_allow_html=True,
+            )
     else:
         st.markdown(
-            "<p style='text-align:center; color:#adb5bd; font-size:0.85rem; "
-            "font-style:italic; margin:1.5rem 0;'>"
-            "Insufficient data to display score radar.</p>",
+            f"""
+            <div style="text-align:center; padding:32px 16px; color:#94A3B8; font-size:13px;">
+                <div style="font-size:24px; margin-bottom:8px;">📊</div>
+                Radar chart requires at least 3 sub-scores.<br>
+                This neighbourhood has {_n_scores} of 5.
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
@@ -520,11 +530,22 @@ def _est_yield(price, area_m2, median_rent_price_m2) -> str:
 
 def _op_badge(op: str) -> str:
     op_lower = str(op).lower()
+    _style = (
+        "font-size:9px; font-weight:700; padding:2px 5px; border-radius:3px; "
+        "white-space:nowrap; letter-spacing:0.04em;"
+    )
     if op_lower == "sale":
-        return '<span class="bs-op-sale">SALE</span>'
+        return (
+            f'<span style="{_style} background:#E8F5E9; color:#2E7D32;">SALE</span>'
+        )
     if op_lower == "rent":
-        return '<span class="bs-op-rent">RENT</span>'
-    return f'<span class="bs-op-other">{html_module.escape(op.upper())}</span>'
+        return (
+            f'<span style="{_style} background:#E3F2FD; color:#1565C0;">RENT</span>'
+        )
+    return (
+        f'<span style="{_style} background:#F5F5F5; color:#616161;">'
+        f'{html_module.escape(op.upper())}</span>'
+    )
 
 
 def _build_listings_html(df: pd.DataFrame, median_rent_price_m2) -> str:
@@ -586,7 +607,7 @@ def _build_listings_html(df: pd.DataFrame, median_rent_price_m2) -> str:
       <th class="num">Area</th>
       <th class="num">€/m²</th>
       <th class="num">Beds</th>
-      <th class="ctr">Type</th>
+      <th class="ctr"></th>
       <th class="num">Est. Yield</th>
     </tr>
   </thead>
