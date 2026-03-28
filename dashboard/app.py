@@ -305,7 +305,7 @@ st.markdown(
         min-height: 140px;
         display: flex;
         flex-direction: column;
-        justify-content: center;
+        justify-content: flex-start;
         box-sizing: border-box;
     }
     .bs-kpi-label {
