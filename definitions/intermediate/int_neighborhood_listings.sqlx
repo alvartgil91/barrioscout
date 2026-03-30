@@ -1,7 +1,7 @@
 config {
   type: "table",
   tags: ["phase3"],
-  description: "Per-neighbourhood listing aggregates: sale/rent counts, median prices per m², gross rental yield. Price medians and yield are NULL where sample size < 3 (insufficient for reliable estimation)."
+  description: "Per-neighbourhood listing aggregates. Yield calculated per size segment (<60m², 60-89m², 90-119m², ≥120m²) and averaged across viable segments to avoid size-mix bias. INACTIVE listings excluded from scoring metrics. DOM stats included as raw metric (not used in scoring until range widens)."
 }
 
 WITH base AS (
@@ -10,11 +10,14 @@ WITH base AS (
     neighborhood_city AS city,
     operation_type,
     price_per_m2,
-    has_price_drop
+    area_m2,
+    has_price_drop,
+    discount_pct
   FROM ${ref("int_listings_latest")}
   WHERE neighborhood_id IS NOT NULL
     AND price_per_m2    IS NOT NULL
     AND price_per_m2     > 0
+    AND current_status  != 'INACTIVE'
 ),
 
 counts AS (
@@ -24,7 +27,8 @@ counts AS (
     COUNTIF(operation_type = 'sale') AS sale_count,
     COUNTIF(operation_type = 'rent') AS rent_count,
     COUNT(*)                         AS total_listings,
-    COUNTIF(has_price_drop)          AS pricedrop_count
+    COUNTIF(has_price_drop)          AS pricedrop_count,
+    AVG(IF(has_price_drop AND discount_pct IS NOT NULL, discount_pct, NULL)) AS avg_discount_pct
   FROM base
   GROUP BY neighborhood_id, city
 ),
@@ -46,6 +50,58 @@ rent_medians AS (
   FROM base
   WHERE operation_type = 'rent'
   GROUP BY neighborhood_id
+),
+
+-- ── YIELD BY SIZE SEGMENT ──────────────────────────────────────────────────
+-- Segments: <60m², 60-89m², 90-119m², ≥120m²
+-- A segment is viable when it has ≥3 sale AND ≥3 rent listings.
+-- Final yield = simple average of viable segment yields.
+-- This avoids size-mix bias (large flats inflate yield vs small flats).
+segment_yields AS (
+  SELECT
+    neighborhood_id,
+    CASE
+      WHEN area_m2 < 60  THEN 'small'
+      WHEN area_m2 < 90  THEN 'medium'
+      WHEN area_m2 < 120 THEN 'large'
+      ELSE 'xlarge'
+    END AS size_segment,
+    SAFE_DIVIDE(
+      APPROX_QUANTILES(IF(operation_type = 'rent', price_per_m2, NULL), 2)[SAFE_OFFSET(1)] * 12,
+      APPROX_QUANTILES(IF(operation_type = 'sale', price_per_m2, NULL), 2)[SAFE_OFFSET(1)]
+    ) * 100 AS segment_yield,
+    COUNTIF(operation_type = 'sale') AS seg_sale_n,
+    COUNTIF(operation_type = 'rent') AS seg_rent_n
+  FROM base
+  WHERE area_m2 IS NOT NULL
+  GROUP BY neighborhood_id, size_segment
+  HAVING COUNTIF(operation_type = 'sale') >= 3 AND COUNTIF(operation_type = 'rent') >= 3
+),
+
+yield_averaged AS (
+  SELECT
+    neighborhood_id,
+    AVG(segment_yield)                                      AS gross_rental_yield_pct,
+    COUNT(*)                                                AS yield_segments_used,
+    STRING_AGG(size_segment, ',' ORDER BY size_segment)    AS yield_segments_list
+  FROM segment_yields
+  GROUP BY neighborhood_id
+),
+
+-- ── DOM STATS ─────────────────────────────────────────────────────────────
+-- Reads ALL listings (including INACTIVE) — INACTIVE have the real DOM from inactive_since.
+-- Excludes days_on_market = 0 (listings checked same day first seen, no real signal).
+-- Not used in scoring yet; kept as raw metric for future use.
+dom_stats AS (
+  SELECT
+    neighborhood_id,
+    APPROX_QUANTILES(
+      IF(days_on_market > 0, days_on_market, NULL), 2
+    )[SAFE_OFFSET(1)] AS median_days_on_market
+  FROM ${ref("int_listings_latest")}
+  WHERE neighborhood_id IS NOT NULL
+    AND days_on_market IS NOT NULL
+  GROUP BY neighborhood_id
 )
 
 SELECT
@@ -54,20 +110,23 @@ SELECT
   c.sale_count,
   c.rent_count,
   c.total_listings,
-  SAFE_DIVIDE(c.pricedrop_count, c.total_listings) AS pricedrop_ratio,
+  SAFE_DIVIDE(c.pricedrop_count, c.total_listings)  AS pricedrop_ratio,
+  c.avg_discount_pct,
 
   -- Suppress medians when sample is too small for reliable estimation
   CASE WHEN c.sale_count >= 3 THEN sm.median_sale_price_m2 ELSE NULL END AS median_sale_price_m2,
   CASE WHEN c.rent_count >= 3 THEN rm.median_rent_price_m2 ELSE NULL END AS median_rent_price_m2,
 
-  -- Gross rental yield: (monthly rent/m² × 12) / sale price/m² × 100
-  -- Requires ≥3 of each type for both inputs to be non-NULL
-  CASE
-    WHEN c.sale_count >= 3 AND c.rent_count >= 3
-    THEN SAFE_DIVIDE(rm.median_rent_price_m2 * 12, sm.median_sale_price_m2) * 100
-    ELSE NULL
-  END AS gross_rental_yield_pct
+  -- Yield: averaged across viable size segments (NULL if no segment qualifies)
+  ya.gross_rental_yield_pct,
+  ya.yield_segments_used,
+  ya.yield_segments_list,
+
+  -- DOM: raw metric (not in scoring until range > 30 days)
+  dm.median_days_on_market
 
 FROM counts            AS c
 LEFT JOIN sale_medians AS sm USING (neighborhood_id)
 LEFT JOIN rent_medians AS rm USING (neighborhood_id)
+LEFT JOIN yield_averaged AS ya USING (neighborhood_id)
+LEFT JOIN dom_stats    AS dm USING (neighborhood_id)

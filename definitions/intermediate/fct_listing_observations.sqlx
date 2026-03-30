@@ -44,6 +44,8 @@ SELECT
   e.bedrooms,
   e.campaign_type,
   e.property_url,
+  e.previous_price,
+  e.discount_pct,
   e.email_date,
   e._loaded_at
 FROM exact_match e

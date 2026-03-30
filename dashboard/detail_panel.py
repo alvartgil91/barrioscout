@@ -154,8 +154,8 @@ _RADAR_DESCRIPTIONS = [
     "Nearby amenities: transport, healthcare, education & retail. Higher = better served.",
     "Share of buildings built after 2000. Higher = newer housing stock.",
     "Affordability: median price/m². Higher = lower prices vs. the area.",
-    "Gross annual rental yield. Higher = better estimated return.",
-    "Market liquidity: listing density & price drops. Higher = more activity & motivated sellers.",
+    "Gross annual rental yield averaged across size segments (<60m², 60–89m², 90–119m², ≥120m²). Higher = better estimated return.",
+    "Market activity: supply density (40%) + price drop ratio (30%) + discount size (30%). Higher = more liquid & motivated sellers.",
 ]
 
 
@@ -217,11 +217,11 @@ def _radar_chart(row: pd.Series) -> Optional[go.Figure]:
 # ── Sub-score progress bars ───────────────────────────────────────────────────
 
 _SCORE_COMPONENTS: list[tuple[str, str, int]] = [
-    ("Services", "services_score",          30),
-    ("Building", "building_quality_score",  20),
+    ("Services", "services_score",          20),
+    ("Building", "building_quality_score",  15),
     ("Price",    "price_score",             20),
-    ("Yield",    "yield_score",             20),
-    ("Market",   "market_dynamics_score",   10),
+    ("Yield",    "yield_score",             25),
+    ("Market",   "market_dynamics_score",   20),
 ]
 
 
@@ -561,27 +561,50 @@ def _op_badge(op: str) -> str:
 
 
 def _build_listings_html(df: pd.DataFrame, median_rent_price_m2) -> str:
-    """Build the full HTML table for the listings."""
+    """Build the full HTML table for the listings.
+
+    INACTIVE rows are rendered dimmed (opacity 0.45) with a grey REMOVED badge.
+    Rows with discount_pct set show a red discount badge next to the price.
+    """
     rows_html = []
     for _, r in df.iterrows():
         op_lower = str(r["operation_type"]).lower()
+        is_inactive = str(r.get("current_status", "")).upper() == "INACTIVE"
 
         _hpd = r.get("has_price_drop")
         has_drop = pd.notna(_hpd) and bool(_hpd)
 
+        _dpct = r.get("discount_pct")
+        has_discount = pd.notna(_dpct) and float(_dpct) > 0
+        discount_badge = (
+            f'<span style="background:#FFEBEE; color:#C62828; font-size:9px; font-weight:700; '
+            f'padding:1px 4px; border-radius:3px; white-space:nowrap; margin-left:4px;">'
+            f'−{float(_dpct):.1f}%</span>'
+            if has_discount else ""
+        )
+
         price_raw = _eu_price(r["price"])
-        if has_drop:
+        if is_inactive:
+            price_cell = (
+                f'<td class="bs-lt-price">'
+                f'{price_raw}'
+                f'<span style="background:#F5F5F5; color:#616161; font-size:9px; font-weight:700; '
+                f'padding:1px 4px; border-radius:3px; white-space:nowrap; margin-left:4px;">REMOVED</span>'
+                f'</td>'
+            )
+        elif has_drop:
             price_cell = (
                 f'<td class="bs-lt-price">'
                 f'{price_raw} <span class="bs-drop-arrow">▼</span>'
+                f'{discount_badge}'
                 f'</td>'
             )
         else:
-            price_cell = f'<td class="bs-lt-price">{price_raw}</td>'
+            price_cell = f'<td class="bs-lt-price">{price_raw}{discount_badge}</td>'
 
         yield_str = (
             _est_yield(r["price"], r["area_m2"], median_rent_price_m2)
-            if op_lower == "sale"
+            if op_lower == "sale" and not is_inactive
             else "—"
         )
 
@@ -596,8 +619,9 @@ def _build_listings_html(df: pd.DataFrame, median_rent_price_m2) -> str:
         else:
             link_cell = '<td class="bs-lt-link">—</td>'
 
+        row_style = ' style="opacity:0.45;"' if is_inactive else ""
         rows_html.append(
-            f"<tr>"
+            f"<tr{row_style}>"
             f"{link_cell}"
             f"{price_cell}"
             f'<td class="bs-lt-num">{_fmt_area(r["area_m2"])}</td>'
@@ -712,21 +736,43 @@ def render_listings_section(neighborhood_row: pd.Series) -> None:
         )
         return
 
-    # Drop confirmed-inactive listings.
+    # Separate active and confirmed-inactive listings.
     if "current_status" in df.columns:
+        inactive_df = df[df["current_status"] == "INACTIVE"].copy()
         df = df[df["current_status"] != "INACTIVE"].copy()
+    else:
+        inactive_df = pd.DataFrame()
 
-    total_count = len(df)
+    inactive_count = len(inactive_df)
+    total_count = len(df)  # active only
 
-    if df.empty:
+    if total_count == 0 and inactive_count == 0:
         st.markdown(
             "<p style='color:#adb5bd; font-size:0.88rem; margin:1rem 0;'>"
-            "No active listings found in this zone.</p>",
+            "No listings found in this zone.</p>",
             unsafe_allow_html=True,
         )
         return
 
-    # ── Filter ────────────────────────────────────────────────────────────────
+    # ── Inactive KPI (4.6) ────────────────────────────────────────────────────
+    if inactive_count >= 1:
+        st.markdown(
+            f"<p style='font-size:0.78rem; color:#9E9E9E; margin:0 0 0.5rem; font-style:italic;'>"
+            f"⚠️ {inactive_count} listing{'s' if inactive_count > 1 else ''} "
+            f"recently removed from market</p>",
+            unsafe_allow_html=True,
+        )
+
+    if total_count == 0:
+        st.markdown(
+            "<p style='color:#adb5bd; font-size:0.88rem; margin:0 0 0.5rem;'>"
+            "No active listings found in this zone.</p>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(_build_listings_html(inactive_df, median_rent), unsafe_allow_html=True)
+        return
+
+    # ── Filter (active only) ──────────────────────────────────────────────────
     if op_filter != "All":
         df = df[df["operation_type"].str.lower() == op_filter.lower()]
 
@@ -755,8 +801,13 @@ def render_listings_section(neighborhood_row: pd.Series) -> None:
         )
         return
 
-    # ── Table ─────────────────────────────────────────────────────────────────
-    st.markdown(_build_listings_html(df, median_rent), unsafe_allow_html=True)
+    # ── Table: active (filtered+sorted) + inactive appended at bottom ─────────
+    combined = (
+        pd.concat([df, inactive_df], ignore_index=True)
+        if inactive_count > 0
+        else df
+    )
+    st.markdown(_build_listings_html(combined, median_rent), unsafe_allow_html=True)
 
     # ── Count line ────────────────────────────────────────────────────────────
     shown = len(df)

@@ -94,61 +94,51 @@ def load_neighborhood_scores(metro_area: str) -> pd.DataFrame:
     Returns:
         DataFrame with one row per neighborhood.
     """
-    # zone_type and parent_municipality are derived by joining barrioscout_raw.neighborhoods
-    # (the always-current raw table) and applying the same CASE logic as stg_neighborhoods.
-    # This avoids depending on Dataform-managed objects (views or tables) being up-to-date.
     query = f"""
         SELECT
-            s.neighborhood_id,
-            s.neighborhood_name,
-            s.city,
-            s.metro_area,
-            s.district_id,
-            s.district_name,
-            s.area_km2,
-            s.health_count,
-            s.education_count,
-            s.shopping_count,
-            s.transport_count,
-            s.total_pois,
-            s.pois_per_km2,
-            s.residential_buildings,
-            s.avg_year_built,
-            s.median_year_built,
-            s.pct_post_2000,
-            s.pct_pre_1960,
-            s.sale_count,
-            s.rent_count,
-            s.total_listings,
-            s.pricedrop_ratio,
-            s.median_sale_price_m2,
-            s.median_rent_price_m2,
-            s.gross_rental_yield_pct,
-            s.services_score,
-            s.building_quality_score,
-            s.price_score,
-            s.yield_score,
-            s.market_dynamics_score,
-            s.composite_score,
-            s.data_completeness,
-            s.available_sub_scores,
-            s.scored_at,
-            CASE
-                WHEN n.code NOT LIKE 'metro_%'                          THEN 'capital_neighborhood'
-                WHEN n.district_name IS NOT NULL
-                     AND n.district_name != n.name                      THEN 'metro_neighborhood'
-                ELSE                                                         'metro_municipality'
-            END AS zone_type,
-            CASE
-                WHEN n.code LIKE 'metro_%' THEN INITCAP(n.city)
-                ELSE NULL
-            END AS parent_municipality
-        FROM `{DATASET_ANALYTICS}.agg_neighborhood_scores` AS s
-        LEFT JOIN `{DATASET_RAW}.neighborhoods` AS n
-            ON  LOWER(n.city || '_' || REPLACE(LOWER(n.name), ' ', '_')) = s.neighborhood_id
-            AND n.level = 'neighborhood'
-        WHERE LOWER(s.metro_area) = LOWER(@metro_area)
-        ORDER BY s.composite_score DESC NULLS LAST
+            neighborhood_id,
+            neighborhood_name,
+            city,
+            metro_area,
+            district_id,
+            district_name,
+            area_km2,
+            zone_type,
+            parent_municipality,
+            health_count,
+            education_count,
+            shopping_count,
+            transport_count,
+            total_pois,
+            pois_per_km2,
+            residential_buildings,
+            avg_year_built,
+            median_year_built,
+            pct_post_2000,
+            pct_pre_1960,
+            sale_count,
+            rent_count,
+            total_listings,
+            pricedrop_ratio,
+            avg_discount_pct,
+            median_sale_price_m2,
+            median_rent_price_m2,
+            gross_rental_yield_pct,
+            yield_segments_used,
+            yield_segments_list,
+            median_days_on_market,
+            services_score,
+            building_quality_score,
+            price_score,
+            yield_score,
+            market_dynamics_score,
+            composite_score,
+            data_completeness,
+            available_sub_scores,
+            scored_at
+        FROM `{DATASET_ANALYTICS}.agg_neighborhood_scores`
+        WHERE LOWER(metro_area) = LOWER(@metro_area)
+        ORDER BY composite_score DESC NULLS LAST
     """
     job_config = bigquery.QueryJobConfig(
         query_parameters=[bigquery.ScalarQueryParameter("metro_area", "STRING", metro_area)]
@@ -252,6 +242,8 @@ def load_listings(neighborhood_id: Optional[str] = None) -> pd.DataFrame:
             times_seen,
             has_price_drop,
             days_on_market,
+            discount_pct,
+            previous_price,
             current_status
         FROM `{DATASET_ANALYTICS}.int_listings_latest`
         {where_clause}

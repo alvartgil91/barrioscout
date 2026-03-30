@@ -43,15 +43,21 @@ SELECT
   l.bedrooms,
   l.campaign_type,
   l.property_url,
+  l.previous_price,
+  l.discount_pct,
   lc.first_seen_at,
   lc.last_seen_at,
   lc.times_seen,
   lc.has_price_drop,
-  -- days_on_market: from first email to first INACTIVE check; fallback to last email seen
-  DATE_DIFF(
-    DATE(COALESCE(s.inactive_since, lc.last_seen_at)),
-    DATE(lc.first_seen_at),
-    DAY
+  -- days_on_market: from first email to first INACTIVE check; fallback to last email seen.
+  -- GREATEST guard prevents negative values when inactive_since < first_seen_at (data quirk).
+  GREATEST(
+    DATE_DIFF(
+      DATE(COALESCE(s.inactive_since, lc.last_seen_at)),
+      DATE(lc.first_seen_at),
+      DAY
+    ),
+    0
   )                                           AS days_on_market,
   COALESCE(s.current_status, 'UNCHECKED')    AS current_status,
   s.last_checked_at,

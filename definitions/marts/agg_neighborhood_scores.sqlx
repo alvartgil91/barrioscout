@@ -1,7 +1,7 @@
 config {
   type: "table",
   tags: ["phase3"],
-  description: "Neighborhood score card. Joins dim_neighborhoods + int_neighborhood_pois + int_neighborhood_buildings + int_neighborhood_listings. Computes PERCENT_RANK()-based 0–100 sub-scores within city (each capital city and metro municipality is its own ranking universe). Composite score redistributes weight proportionally among non-NULL sub-scores."
+  description: "Neighborhood score card. Joins dim_neighborhoods + int_neighborhood_pois + int_neighborhood_buildings + int_neighborhood_listings. Computes PERCENT_RANK()-based 0–100 sub-scores within city (each capital city and metro municipality is its own ranking universe). Composite score uses investor-oriented weights (yield 25% / price 20% / market 20% / services 20% / building 15%) with completeness penalty for missing sub-scores."
 }
 
 WITH dim AS (
@@ -66,9 +66,13 @@ ranked AS (
     l.rent_count,
     l.total_listings,
     l.pricedrop_ratio,
+    l.avg_discount_pct,
     l.median_sale_price_m2,
     l.median_rent_price_m2,
     l.gross_rental_yield_pct,
+    l.yield_segments_used,
+    l.yield_segments_list,
+    l.median_days_on_market,
 
     -- ── walkability components ────────────────
     -- Higher POI density per km² = better walkability
@@ -112,7 +116,11 @@ ranked AS (
     -- Higher pricedrop ratio = more motivated sellers = interesting signal
     PERCENT_RANK() OVER (
       PARTITION BY d.city ORDER BY l.pricedrop_ratio ASC NULLS LAST
-    ) AS pricedrop_prank
+    ) AS pricedrop_prank,
+    -- Higher avg discount = more distressed market = interesting for investors
+    PERCENT_RANK() OVER (
+      PARTITION BY d.city ORDER BY l.avg_discount_pct ASC NULLS LAST
+    ) AS discount_magnitude_prank
 
   FROM dim AS d
   LEFT JOIN pois      AS p USING (neighborhood_id)
@@ -150,25 +158,35 @@ scores AS (
       THEN ROUND(price_prank * 100, 1)
     END AS price_score,
 
-    -- yield_score: NULL when fewer than 3 sale or 3 rent listings
+    -- yield_score: NULL when no viable size segment (≥3 sale + ≥3 rent per segment)
     CASE
       WHEN gross_rental_yield_pct IS NOT NULL
       THEN ROUND(yield_prank * 100, 1)
     END AS yield_score,
 
     -- market_dynamics_score: NULL when total_listings < 5 (too sparse)
+    -- Three components: supply density (40%), pricedrop ratio (30%), discount magnitude (30%)
+    -- Falls back to 2-component average when avg_discount_pct is unavailable
     CASE
       WHEN total_listings >= 5
-      THEN ROUND((supply_density_prank + pricedrop_prank) / 2.0 * 100, 1)
+      THEN ROUND(
+        CASE
+          WHEN avg_discount_pct IS NOT NULL
+          THEN (supply_density_prank * 0.4 + pricedrop_prank * 0.3 + discount_magnitude_prank * 0.3) * 100
+          ELSE (supply_density_prank + pricedrop_prank) / 2.0 * 100
+        END,
+        1
+      )
     END AS market_dynamics_score
 
   FROM ranked
 ),
 
 -- ─────────────────────────────────────────────
--- COMPOSITE SCORE (proportional weight redistribution)
--- Weights: walkability 30%, building_quality 20%, price 20%, yield 20%, market 10%
--- When a sub-score is NULL its weight is redistributed proportionally among non-NULLs
+-- COMPOSITE SCORE
+-- Weights (investor profile): yield 25% / price 20% / market 20% / services 20% / building 15%
+-- When a sub-score is NULL its weight is redistributed proportionally among non-NULLs.
+-- Completeness penalty applied to final score: fewer dimensions = lower confidence.
 -- ─────────────────────────────────────────────
 composite AS (
   SELECT
@@ -181,12 +199,12 @@ composite AS (
     IF(yield_score            IS NOT NULL, 1, 0)        AS w_yield_flag,
     IF(market_dynamics_score  IS NOT NULL, 1, 0)        AS w_market_flag,
 
-    -- Nominal weights
-    0.30  AS nom_w_walkability,
-    0.20  AS nom_w_building,
-    0.20  AS nom_w_price,
-    0.20  AS nom_w_yield,
-    0.10  AS nom_w_market
+    -- Nominal weights (investor-oriented)
+    0.20  AS nom_w_walkability,   -- was 0.30 (less weight on livability for investor profile)
+    0.15  AS nom_w_building,      -- was 0.20
+    0.20  AS nom_w_price,         -- unchanged (affordability signal)
+    0.25  AS nom_w_yield,         -- was 0.20 (core investor metric)
+    0.20  AS nom_w_market          -- was 0.10 (liquidity matters for investors)
 
   FROM scores
 )
@@ -220,9 +238,13 @@ SELECT
   rent_count,
   total_listings,
   ROUND(pricedrop_ratio, 4)                AS pricedrop_ratio,
+  ROUND(avg_discount_pct, 2)               AS avg_discount_pct,
   ROUND(median_sale_price_m2, 2)           AS median_sale_price_m2,
   ROUND(median_rent_price_m2, 2)           AS median_rent_price_m2,
   ROUND(gross_rental_yield_pct, 2)         AS gross_rental_yield_pct,
+  yield_segments_used,
+  yield_segments_list,
+  median_days_on_market,
 
   -- ── sub-scores ───────────────────────────────────────────────────────────
   services_score,
@@ -232,7 +254,8 @@ SELECT
   market_dynamics_score,
 
   -- ── composite score ──────────────────────────────────────────────────────
-  -- Weighted average; NULL sub-scores excluded and their weight redistributed
+  -- Weighted average with proportional redistribution for missing sub-scores,
+  -- then multiplied by completeness penalty (fewer dimensions = penalized).
   ROUND(
     SAFE_DIVIDE(
       (services_score          * nom_w_walkability * w_walkability_flag)
@@ -245,7 +268,16 @@ SELECT
     + (nom_w_price       * w_price_flag)
     + (nom_w_yield       * w_yield_flag)
     + (nom_w_market      * w_market_flag)
-    ),
+    )
+    -- Completeness penalty: fewer sub-scores = lower confidence = penalized score
+    * CASE (w_walkability_flag + w_building_flag + w_price_flag + w_yield_flag + w_market_flag)
+        WHEN 5 THEN 1.00
+        WHEN 4 THEN 0.95
+        WHEN 3 THEN 0.85
+        WHEN 2 THEN 0.70
+        WHEN 1 THEN 0.50
+        ELSE 0.00
+      END,
     1
   ) AS composite_score,
 
