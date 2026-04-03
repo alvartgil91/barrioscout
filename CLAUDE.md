@@ -186,10 +186,17 @@ Remaining 131 orphans: municipalities with 1–3 listings (below download thresh
 
 ### Pending items
 1. ~~Polígonos de municipios del área metropolitana~~ ✅ RESUELTO
-2. Deploy Streamlit to Community Cloud
+2. ~~Deploy Streamlit to Community Cloud~~ ✅ FILES READY — needs web UI configuration at share.streamlit.io (see README.md deployment section). Service account `streamlit-reader` still needs to be created via gcloud commands in README.
 3. pandas-gbq warning in Cloud Function
 4. Ingest OSM POIs for metro municipalities (walkability = 0 currently)
 5. Possible: neighborhood polygons for large municipalities (Alcalá 28 listings, Las Gabias 30)
+
+### DOM activation status (2026-03-30)
+- `median_days_on_market` raw metric is calculated and present in `agg_neighborhood_scores`
+- **NOT activated**: DOM range is only 1–9 days globally (Madrid max range: 8 days; Granada: 6 days)
+- Decision threshold: 30-day range between neighborhoods in any city with ≥3 neighborhoods
+- Estimated ready: when listing accumulation produces meaningful spread — recheck after 3–4 more months of data
+- No SQLX changes made; `dom_prank` not yet added to `market_dynamics_score`
 
 ---
 
@@ -202,7 +209,7 @@ Remaining 131 orphans: municipalities with 1–3 listings (below download thresh
 | 2.7 | Pre-scoring fixes (mojibake, bus_stop POIs) | ✅ Complete |
 | 2.8 | Geocoding fixes + metro polygons + spatial join improvement | ✅ Complete |
 | 3 | Scoring engine (Dataform, `agg_neighborhood_scores`) | ✅ Complete |
-| 4 | Streamlit dashboard | ⬜ Next |
+| 4 | Streamlit dashboard | ✅ Complete (deployment files ready) |
 
 ---
 

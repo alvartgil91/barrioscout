@@ -6,3 +6,5 @@ google-cloud-bigquery
 pandas
 pandas-gbq
 db-dtypes
+branca
+pyarrow

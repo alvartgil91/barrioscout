@@ -62,3 +62,6 @@ htmlcov/
 # Dataform
 node_modules/
 .df-credentials.json
+
+# Streamlit secrets (real file — example is committed as secrets.toml.example)
+.streamlit/secrets.toml

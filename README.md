@@ -78,18 +78,59 @@ barrioscout/
 git clone <repo-url> barrioscout
 cd barrioscout
 pip install -r requirements.txt
+pip install -r dashboard/requirements.txt
 
 # 2. Configure credentials
 cp .env.example .env
-# Set GOOGLE_PLACES_API_KEY and GCP_PROJECT_ID in .env
-# Set GOOGLE_APPLICATION_CREDENTIALS for BigQuery access
+# Set GOOGLE_PLACES_API_KEY in .env
+gcloud auth application-default login   # for BigQuery access
 
 # 3. Validate data sources (no BigQuery required)
 python tests/test_sources.py
 
 # 4. Launch dashboard
-streamlit run src/app/main.py
+streamlit run dashboard/app.py
 ```
+
+---
+
+## Deployment (Streamlit Community Cloud)
+
+The dashboard is deployed to [Streamlit Community Cloud](https://share.streamlit.io) (free tier).
+BigQuery auth uses a dedicated read-only service account injected via Streamlit secrets.
+
+### Create the service account (run once, do not execute automatically)
+
+```bash
+# Create SA with least-privilege BigQuery read access
+gcloud iam service-accounts create streamlit-reader \
+  --project=portfolio-alvartgil91 \
+  --display-name="BarrioScout Streamlit Reader"
+
+gcloud projects add-iam-policy-binding portfolio-alvartgil91 \
+  --member="serviceAccount:streamlit-reader@portfolio-alvartgil91.iam.gserviceaccount.com" \
+  --role="roles/bigquery.dataViewer"
+
+gcloud projects add-iam-policy-binding portfolio-alvartgil91 \
+  --member="serviceAccount:streamlit-reader@portfolio-alvartgil91.iam.gserviceaccount.com" \
+  --role="roles/bigquery.jobUser"
+
+# Export the key (store securely — never commit)
+gcloud iam service-accounts keys create /tmp/streamlit-reader-key.json \
+  --iam-account=streamlit-reader@portfolio-alvartgil91.iam.gserviceaccount.com
+```
+
+### Community Cloud setup steps
+
+1. Go to [share.streamlit.io](https://share.streamlit.io) and sign in with GitHub
+2. **New app** → connect repo `alvartgil91/barrioscout`
+3. Set **Main file path**: `dashboard/app.py`
+4. Open **Advanced settings → Secrets** and paste the contents of `/tmp/streamlit-reader-key.json`
+   converted to TOML format (see `.streamlit/secrets.toml.example` for the exact structure)
+5. Click **Deploy**
+
+The app reads `st.secrets["gcp_service_account"]` in production; locally it falls back to
+Application Default Credentials automatically — no code change required between environments.
 
 ---
 
@@ -97,10 +138,10 @@ streamlit run src/app/main.py
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| **Phase 1** | 🔨 In progress | Project structure, source validation, raw ingestion |
-| **Phase 2** | ⏳ Planned | BigQuery clean layer, deduplication, schema migrations |
-| **Phase 3** | ⏳ Planned | Neighbourhood scoring model (price, amenities, transport) |
-| **Phase 4** | ⏳ Planned | Streamlit dashboard with map and ranking views |
+| **Phase 1** | ✅ Complete | Raw ingestion scripts (Ministerio, Catastro, OSM, INE) |
+| **Phase 2** | ✅ Complete | Neighbourhood + district polygons (Madrid + Granada) |
+| **Phase 3** | ✅ Complete | Scoring engine (Dataform, `agg_neighborhood_scores`) |
+| **Phase 4** | ✅ Complete | Streamlit dashboard (map + ranking + detail panel) |
 | **Phase 5** | ⏳ Planned | Automated weekly refresh, alerting on price anomalies |
 
 ---
