@@ -30,7 +30,7 @@ st.set_page_config(
 st.info(
     "📸 **Data snapshot — May 2026.** This dashboard displays real data "
     "collected over 3 months from public Spanish sources (INE, Catastro, "
-    "OSM, Idealista). Pipeline paused for portfolio purposes.",
+    "OSM, Spanish property portals). Pipeline paused for portfolio purposes.",
     icon=None
 )
 
