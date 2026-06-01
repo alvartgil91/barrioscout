@@ -50,7 +50,7 @@ st.markdown(
     /* ── Hide Streamlit chrome ── */
     #MainMenu                               { visibility: hidden !important; }
     header[data-testid="stHeader"]          { visibility: hidden !important; }
-    [data-testid="collapsedControl"]        { visibility: visible !important; }
+    [data-testid="stExpandSidebarButton"]   { visibility: visible !important; }
     footer                                  { visibility: hidden !important; }
     [data-testid="stToolbar"]               { visibility: hidden !important; }
     [data-testid="stDecoration"]            { display: none !important; }
