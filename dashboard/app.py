@@ -50,6 +50,7 @@ st.markdown(
     /* ── Hide Streamlit chrome ── */
     #MainMenu                               { visibility: hidden !important; }
     header[data-testid="stHeader"]          { visibility: hidden !important; }
+    [data-testid="collapsedControl"]        { visibility: visible !important; }
     footer                                  { visibility: hidden !important; }
     [data-testid="stToolbar"]               { visibility: hidden !important; }
     [data-testid="stDecoration"]            { display: none !important; }
@@ -860,7 +861,7 @@ _n_list = int(filtered_scores_df["total_listings"].sum()) if not filtered_scores
 st.markdown(
     f"""
     <div class="bs-footer">
-        <span>Data refreshed daily</span>
+        <span>Data collected through May 2026</span>
         <span class="sep">·</span>
         <span><span class="accent">{_n_list:,}</span> listings tracked</span>
         <span class="sep">·</span>
