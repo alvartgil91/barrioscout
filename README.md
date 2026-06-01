@@ -29,8 +29,8 @@ flowchart LR
     end
 
     ETL --> RAW[(BigQuery\nbarrioscout_raw)]
-    RAW --> CLEAN[(BigQuery\nbarrioscout_clean)]
-    CLEAN --> ANALYTICS[(BigQuery\nbarrioscout_analytics)]
+    RAW --> STAGING[(BigQuery\nbarrioscout_staging\nDataform views)]
+    STAGING --> ANALYTICS[(BigQuery\nbarrioscout_analytics)]
     ANALYTICS --> DASH[Streamlit\nDashboard]
 ```
 
@@ -40,6 +40,7 @@ flowchart LR
 
 | Source | Data | URL |
 |--------|------|-----|
+| Idealista (via Gmail API) | Active listings, rental/sale prices, price drops — primary scoring data | ~200 new listings/day (paused, museum mode) |
 | [Ministerio de Transportes](https://www.mitma.gob.es/informacion-para-el-ciudadano/informacion-estadistica/vivienda-y-actuaciones-urbanas/estadisticas-y-publicaciones/precio-de-la-vivienda) | Quarterly transactions, price per m² | Public CSV |
 | [Catastro INSPIRE](https://www.catastro.minhap.es/webinspire/index.html) | Building footprints, property attributes | REST API (XML) |
 | [OpenStreetMap Overpass](https://overpass-api.de/) | POIs: schools, hospitals, supermarkets, metro, pharmacies | JSON |
@@ -55,18 +56,18 @@ barrioscout/
 ├── config/settings.py        # Cities, coordinates, BQ config
 ├── src/
 │   ├── ingestion/            # One module per data source
-│   │   ├── ministerio.py
+│   │   ├── idealista_emails.py  # Primary listing source (Gmail API)
+│   │   ├── ministerio_transacciones.py
+│   │   ├── ministerio_valor_tasado.py
 │   │   ├── catastro.py
 │   │   ├── osm_pois.py
 │   │   ├── google_places.py
 │   │   └── ine.py
-│   ├── processing/bq_loader.py   # Generic BigQuery loader
-│   ├── scoring/              # Neighbourhood scoring logic
-│   └── app/                  # Streamlit dashboard
+│   └── processing/bq_loader.py   # Generic BigQuery loader
+├── definitions/              # Dataform SQLX models (13 models + 9 source decls)
+├── dashboard/                # Streamlit dashboard (dashboard/app.py)
 ├── sql/schemas/              # BigQuery DDL
-├── tests/test_sources.py     # Source connectivity validation
-├── notebooks/                # Exploratory analysis
-└── data/raw/                 # Local samples for development
+└── tests/test_sources.py     # Source connectivity validation
 ```
 
 ---
@@ -142,7 +143,7 @@ Application Default Credentials automatically — no code change required betwee
 | **Phase 2** | ✅ Complete | Neighbourhood + district polygons (Madrid + Granada) |
 | **Phase 3** | ✅ Complete | Scoring engine (Dataform, `agg_neighborhood_scores`) |
 | **Phase 4** | ✅ Complete | Streamlit dashboard (map + ranking + detail panel) |
-| **Phase 5** | ⏳ Planned | Automated weekly refresh, alerting on price anomalies |
+| **Phase 5** | ⏸️ Paused | Pipeline in museum mode since May 2026. Schedulers (Cloud Function + Dataform) can be reactivated via GCP Console. |
 
 ---
 
